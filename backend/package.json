@@ -1,0 +1,30 @@
+{
+  "name": "tensai-secbank-backend",
+  "version": "1.0.0",
+  "description": "Tensai SecBank — Express + PostgreSQL backend",
+  "main": "server.js",
+  "scripts": {
+    "dev": "nodemon --watch . --ignore .pg-data --ignore node_modules dev.js",
+    "start": "node server.js",
+    "migrate": "node src/db/migrate.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@electric-sql/pglite": "^0.2.12",
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.36.4",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^7.0.12",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.28.1",
+    "nodemon": "^3.1.4"
+  }
+}

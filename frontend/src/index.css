@@ -1,0 +1,97 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  .dark body {
+    @apply bg-slate-950 text-slate-100;
+  }
+
+  * {
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-slate-200 bg-white shadow-card transition-colors;
+  }
+  .dark .card {
+    @apply border-slate-800 bg-slate-900;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  .dark .btn {
+    @apply focus:ring-offset-slate-950;
+  }
+
+  .btn-primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-700 focus:ring-brand-500 shadow-sm shadow-brand-600/30;
+  }
+  .btn-secondary {
+    @apply btn bg-slate-100 text-slate-900 hover:bg-slate-200 focus:ring-slate-300;
+  }
+  .dark .btn-secondary {
+    @apply bg-slate-800 text-slate-100 hover:bg-slate-700 focus:ring-slate-600;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-slate-600 hover:bg-slate-100 focus:ring-slate-300;
+  }
+  .dark .btn-ghost {
+    @apply text-slate-300 hover:bg-slate-800 focus:ring-slate-700;
+  }
+
+  .input {
+    @apply w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 transition;
+  }
+  .dark .input {
+    @apply border-slate-700 bg-slate-900 text-slate-100 placeholder:text-slate-500;
+  }
+
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-500;
+  }
+  .dark .label {
+    @apply text-slate-400;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  .skeleton {
+    @apply animate-pulse rounded-lg bg-slate-200;
+  }
+  .dark .skeleton {
+    @apply bg-slate-800;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.3);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.5);
+}
