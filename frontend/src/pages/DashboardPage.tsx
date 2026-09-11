@@ -14,6 +14,7 @@ import {
 } from "recharts"
 import {
   ArrowDownLeft,
+  ArrowRight,
   ArrowUpRight,
   Calendar,
   ChevronDown,
@@ -22,6 +23,7 @@ import {
   Loader2,
   Plus,
   Snowflake,
+  Sparkles,
   TrendingUp,
   Wallet
 } from "lucide-react"
@@ -586,9 +588,7 @@ function CardsCard({
       {loading ? (
         <div className="skeleton h-40 w-full" />
       ) : !card ? (
-        <div className="rounded-xl bg-slate-50 py-6 text-center text-xs text-slate-500 dark:bg-slate-800/50">
-          No cards yet
-        </div>
+        <CardAdvert onClick={() => navigate("/app/cards")} />
       ) : (
         <div className="relative mx-auto h-44 max-w-xs">
           <div
@@ -644,10 +644,74 @@ function CardsCard({
           to="/app/cards"
           className="flex-1 rounded-lg border border-slate-200 py-2 text-center text-sm font-semibold text-slate-700 hover:border-brand-400 hover:text-brand-600 dark:border-slate-800 dark:text-slate-200"
         >
-          Manage cards
+          {card ? "Manage cards" : "Explore cards"}
         </Link>
       </div>
     </div>
+  )
+}
+
+/**
+ * Card advertisement — shown on the dashboard when the user has no cards.
+ * Clicking navigates to the Cards page where they can apply.
+ */
+function CardAdvert({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="group relative block h-44 w-full overflow-hidden rounded-2xl text-left"
+      aria-label="Explore Tensai SecBank cards"
+      style={{
+        background:
+          "linear-gradient(135deg,#0e1a3c 0%,#2b3fc8 55%,#7c3aed 100%)"
+      }}
+    >
+      {/* Sheen sweep on hover */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 rotate-[18deg] bg-gradient-to-r from-white/0 via-white/25 to-white/0 transition-transform duration-700 group-hover:translate-x-[520%]"
+      />
+      {/* Glow orbs */}
+      <span aria-hidden className="pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full bg-amber-300/30 blur-2xl" />
+      <span aria-hidden className="pointer-events-none absolute -left-6 -bottom-10 h-32 w-32 rounded-full bg-violet-300/25 blur-2xl" />
+
+      {/* Faux tilted card in the background */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -right-4 top-6 h-28 w-40 rotate-[-8deg] rounded-xl"
+        style={{
+          background: "linear-gradient(135deg,#fbbf24,#fb7185)",
+          boxShadow: "0 20px 40px -20px rgba(0,0,0,.55)"
+        }}
+      />
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -right-1 top-12 h-28 w-40 rotate-[4deg] rounded-xl"
+        style={{
+          background: "linear-gradient(135deg,#38bdf8,#6366f1)",
+          boxShadow: "0 20px 40px -20px rgba(0,0,0,.55)"
+        }}
+      />
+
+      <div className="relative flex h-full flex-col justify-between p-4 text-white">
+        <div>
+          <div className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest backdrop-blur">
+            <Sparkles className="h-3 w-3" />
+            Featured
+          </div>
+          <div className="mt-3 text-lg font-black leading-tight">
+            Get your first<br />Tensai SecBank card
+          </div>
+          <div className="mt-1 text-[11px] text-white/70">
+            Everyday · Lifestyle · Premium — pick the tier that fits you
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-white">
+          Explore &amp; apply
+          <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" />
+        </div>
+      </div>
+    </button>
   )
 }
 

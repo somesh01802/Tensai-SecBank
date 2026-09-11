@@ -51,23 +51,10 @@ async function seedDemoDataForUser(userId, userName) {
         }
     ])
 
-    // Card
-    const holder =
-        userName
-            .split(/\s+/)
-            .filter(Boolean)
-            .slice(0, 2)
-            .join(" ") || "Card Holder"
-    await db.insert(schema.cards).values({
-        userId,
-        holderName: holder,
-        lastFour: randomDigits(4),
-        expiryMonth: 6,
-        expiryYear: (new Date().getFullYear() + 3) % 100,
-        type: "CREDIT",
-        brand: "MASTERCARD",
-        colorHint: "peach"
-    })
+    // Cards: intentionally NOT auto-issued.
+    // New users start with zero cards and must apply for one from Cards page.
+    // See Dashboard's card widget: shows a promotional advert until the user
+    // has an active card.
 
     // Bills — a mix of due items for the dashboard right rail
     const today = new Date()
