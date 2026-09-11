@@ -129,3 +129,72 @@ Checks: health, register (+dup rejection), account creation, system seed, benefi
 CRUD, transfer with ACID commit, idempotency replay, insufficient-balance rejection,
 transaction listing with direction, profile edit, change password + relogin, logout
 with token revocation. 13/13 green.
+
+## v3 (Sep 2026) — AI assistant, splash, and OpenTelemetry
+
+**Chatbot (`POST /api/chatbot/message`).** Server-owned. Uses Anthropic Claude
+when `ANTHROPIC_API_KEY` is set; otherwise falls back to a deterministic
+rule-based responder over the same sanitized context. Never sees MPINs,
+CVVs, full card numbers, passwords, or another user's data.
+
+**Post-login splash.** 6.5-second premium transition with the TSB mark before
+the dashboard opens. Only fires once per authentication event (auth store's
+`justAuthed` flag).
+
+**OpenTelemetry.** Traces + metrics via OTLP HTTP. Point at any OTEL-compatible
+collector by setting `OTEL_EXPORTER_OTLP_ENDPOINT`. Business metrics recorded:
+auth attempts/failures, transfers count/amount, bills paid, loans applied/closed,
+cards issued, accounts opened/closed, statement downloads, chatbot requests +
+latency, business errors, scheduler runs. Health at `GET /telemetry/health`.
+
+### Deploying updates to the Linux server
+
+On the server (assuming layout from the earlier deploy guide — `/var/www/tensai/app`):
+
+```bash
+# 1. Pull latest
+sudo -u tensai git -C /var/www/tensai/app pull
+
+# 2. Backend deps + rebuild frontend
+sudo -u tensai npm --prefix /var/www/tensai/app/backend  install --omit=dev
+sudo -u tensai npm --prefix /var/www/tensai/app/frontend install
+sudo -u tensai npm --prefix /var/www/tensai/app/frontend run build
+
+# 3. Migrations run automatically at boot — just restart the API
+sudo systemctl restart tensai-api
+
+# 4. Apache serves the freshly built dist/ — reload to pick up new assets
+sudo systemctl reload apache2
+
+# 5. Verify
+curl -s http://127.0.0.1:$(grep '^PORT=' /var/www/tensai/app/backend/.env | cut -d= -f2)/health
+curl -s http://127.0.0.1:$(grep '^PORT=' /var/www/tensai/app/backend/.env | cut -d= -f2)/telemetry/health
+sudo journalctl -u tensai-api -n 30 --no-pager
+```
+
+### Wiring up telemetry to an ELK / OTEL Collector
+
+Set the OTLP endpoint (and optional auth headers) in `backend/.env`:
+
+```
+OTEL_EXPORTER_OTLP_ENDPOINT=http://your-collector:4318
+OTEL_EXPORTER_OTLP_HEADERS=api-key=xxx
+```
+
+Any OTEL-compatible collector will work (OpenTelemetry Collector, Grafana Agent,
+Elastic APM Server, Honeycomb, Datadog OTEL endpoint). Traces land in your APM
+UI; metrics land in the metrics backend of your choice; both feed dashboards in
+Kibana / Grafana / Canvas.
+
+Disable telemetry entirely with `TELEMETRY_ENABLED=false`.
+
+### Wiring up the AI assistant
+
+Set:
+
+```
+ANTHROPIC_API_KEY=sk-ant-xxxx
+ANTHROPIC_MODEL=claude-haiku-4-5-20251001
+```
+
+Without a key, the chatbot still works via rule-based answers.

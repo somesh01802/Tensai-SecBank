@@ -2,6 +2,8 @@ const { and, eq, or, inArray, sql, desc } = require("drizzle-orm")
 const { getDb, schema } = require("../db")
 const { balancesForAccounts } = require("./account.controller")
 const emailService = require("../services/email.service")
+const { getTelemetry } = require("../telemetry")
+const t = () => getTelemetry?.()
 
 /**
  * Optional dev-only simulation delay to demo the "pending" UX on the frontend.
@@ -138,10 +140,12 @@ async function createTransaction(req, res) {
         })
     } catch (err) {
         if (err.code === "INSUFFICIENT_BALANCE") {
+            t()?.metrics?.businessErrors?.add(1, { op: "transfer.internal", reason: "insufficient_balance" })
             return res.status(400).json({
                 message: `Insufficient balance. Available: ${err.available}, Requested: ${amt}`
             })
         }
+        t()?.metrics?.businessErrors?.add(1, { op: "transfer.internal", reason: "unknown" })
         console.error("[transaction] failed:", err)
         return res.status(500).json({ message: "Transaction failed, please retry" })
     }
@@ -150,6 +154,9 @@ async function createTransaction(req, res) {
     emailService
         .sendTransactionEmail(req.user.email, req.user.name, amt, toAccount)
         .catch(() => {})
+
+    t()?.metrics?.transfers?.add(1, { kind: "internal", status: "COMPLETED" })
+    t()?.metrics?.transferAmount?.record(amt, { kind: "internal" })
 
     return res.status(201).json({
         message: "Transaction completed successfully",
@@ -345,6 +352,7 @@ async function downloadStatement(req, res) {
     const filename = `tensai-statement-${(from || new Date(0)).toISOString().slice(0,10)}_to_${(to || new Date()).toISOString().slice(0,10)}.csv`
     res.setHeader("Content-Type", "text/csv")
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`)
+    t()?.metrics?.statementDownloads?.add(1, { rows: rows.length })
     res.status(200).send(lines.join("\n"))
 }
 
@@ -418,6 +426,9 @@ async function receiveMoney(req, res) {
         })
         return txRow
     })
+
+    t()?.metrics?.transfers?.add(1, { kind: "receive", status: "COMPLETED" })
+    t()?.metrics?.transferAmount?.record(amt, { kind: "receive" })
 
     res.status(201).json({ message: "Deposit credited", transaction: shape(completed) })
 }

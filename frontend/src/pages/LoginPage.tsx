@@ -26,7 +26,9 @@ export function LoginPage() {
     onSuccess: (data: any) => {
       setAuth(data.user, data.token, Boolean(data.hasMpin))
       toast.success(`Welcome back, ${data.user.name.split(" ")[0]}`)
-      navigate("/app", { replace: true })
+      // If MPIN is set → premium splash → dashboard.
+      // If MPIN isn't set → go set it (mandatory gate).
+      navigate(data.hasMpin ? "/splash" : "/mpin-setup", { replace: true })
     },
     onError: (err) => toast.error(apiErrorMessage(err, "Login failed"))
   })

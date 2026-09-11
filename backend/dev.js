@@ -8,6 +8,8 @@
  */
 
 require("dotenv").config()
+// Telemetry MUST be required before Express / pg / drizzle for auto-instr to work.
+require("./src/telemetry")
 const path = require("path")
 
 async function boot() {

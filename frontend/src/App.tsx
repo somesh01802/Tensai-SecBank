@@ -10,6 +10,7 @@ import { LandingPage } from "@/pages/LandingPage"
 import { LoginPage } from "@/pages/LoginPage"
 import { RegisterPage } from "@/pages/RegisterPage"
 import { MpinSetupPage } from "@/pages/MpinSetupPage"
+import { SplashPage } from "@/pages/SplashPage"
 import { ManageAccountPage } from "@/pages/ManageAccountPage"
 import { RewardsPage } from "@/pages/RewardsPage"
 import { NotificationsPage } from "@/pages/NotificationsPage"
@@ -50,6 +51,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <MpinSetupPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/splash"
+        element={
+          <ProtectedRoute requireMpin>
+            <SplashPage />
           </ProtectedRoute>
         }
       />

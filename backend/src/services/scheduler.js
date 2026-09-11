@@ -29,6 +29,9 @@ function stop() {
 }
 
 async function tick() {
+    const { getTelemetry } = require("../telemetry")
+    const tt = getTelemetry?.()
+    tt?.metrics?.schedulerRuns?.add(1, { kind: "tick" })
     try { await processAutopay() } catch (e) { console.error("[scheduler autopay]", e.message) }
     try { await processRecurringBills() } catch (e) { console.error("[scheduler recurring]", e.message) }
     try { await processScheduledTransfers() } catch (e) { console.error("[scheduler transfers]", e.message) }

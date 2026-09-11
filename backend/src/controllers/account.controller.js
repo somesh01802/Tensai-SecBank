@@ -1,5 +1,7 @@
 const { and, eq, inArray, sql, ne } = require("drizzle-orm")
 const { getDb, schema } = require("../db")
+const { getTelemetry } = require("../telemetry")
+const t = () => getTelemetry?.()
 
 /**
  * Compute account balances via a single aggregate query:
@@ -163,6 +165,7 @@ async function closeAccountController(req, res) {
         .where(eq(schema.accounts.id, accountId))
         .returning()
 
+    t()?.metrics?.accountsClosed?.add(1, { kind: acc.kind || "unknown" })
     return res.status(200).json({ account: { ...updated, balance } })
 }
 

@@ -2,6 +2,8 @@ const { eq } = require("drizzle-orm")
 const { getDb, schema } = require("../db")
 const { generateAccountNumber } = require("../services/accountNumber")
 const rewards = require("../services/rewards.service")
+const { getTelemetry } = require("../telemetry")
+const t = () => getTelemetry?.()
 
 const VALID_KINDS = ["SAVINGS", "SALARY", "NRI", "BUSINESS", "INVESTMENT"]
 
@@ -84,6 +86,7 @@ async function apply(req, res) {
     if (all.length >= 2) await rewards.awardByCondition(req.user.id, "account.count.gte.2")
     if (all.length >= 3) await rewards.awardByCondition(req.user.id, "account.count.gte.3")
 
+    t()?.metrics?.accountsOpened?.add(1, { kind })
     res.status(201).json({ application, account })
 }
 

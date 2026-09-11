@@ -1,6 +1,8 @@
 const { and, eq, desc } = require("drizzle-orm")
 const { getDb, schema } = require("../db")
 const rewards = require("../services/rewards.service")
+const { getTelemetry } = require("../telemetry")
+const t = () => getTelemetry?.()
 
 /**
  * Standard EMI formula (reducing balance):
@@ -99,6 +101,7 @@ async function apply(req, res) {
 
     await rewards.awardByCondition(req.user.id, "loan.applied.first")
     await rewards.awardByCondition(req.user.id, `loan.applied.${p.code}`)
+    t()?.metrics?.loansApplied?.add(1, { product: p.code })
 
     res.status(201).json({ application: shape(app) })
 }
@@ -221,6 +224,7 @@ async function closeApplication(req, res) {
         .where(eq(schema.loanApplications.id, app.id))
         .returning()
 
+    t()?.metrics?.loansClosed?.add(1, { status: nextStatus })
     res.status(200).json({ application: shape(updated) })
 }
 

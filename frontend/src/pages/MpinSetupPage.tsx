@@ -31,7 +31,7 @@ export function MpinSetupPage() {
     onSuccess: () => {
       setHasMpin(true)
       toast.success("MPIN saved. You're all set!")
-      navigate("/app", { replace: true })
+      navigate("/splash", { replace: true })
     },
     onError: (err) => toast.error(apiErrorMessage(err, "Could not save MPIN"))
   })

@@ -1,5 +1,7 @@
 const { and, eq, asc } = require("drizzle-orm")
 const { getDb, schema } = require("../db")
+const { getTelemetry } = require("../telemetry")
+const t = () => getTelemetry?.()
 
 async function list(req, res) {
     const db = await getDb()
@@ -94,6 +96,7 @@ async function pay(req, res) {
         })
         .where(eq(schema.bills.id, bill.id))
         .returning()
+    t()?.metrics?.billsPaid?.add(1, { category: bill.category })
     res.status(200).json({ message: "Bill paid", bill: row })
 }
 

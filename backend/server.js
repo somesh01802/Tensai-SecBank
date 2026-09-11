@@ -5,6 +5,8 @@
  */
 
 require("dotenv").config()
+// Telemetry MUST be required before Express / pg / drizzle for auto-instr to work.
+require("./src/telemetry")
 
 async function boot() {
     const { getDb, runMigrations } = require("./src/db")

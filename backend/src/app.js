@@ -1,9 +1,13 @@
 const express = require("express")
 const cookieParser = require("cookie-parser")
 const cors = require("cors")
+const { telemetryContext } = require("./middleware/telemetry.middleware")
+const { getTelemetry } = require("./telemetry")
 
 
 const app = express()
+
+app.use(telemetryContext)
 
 /**
  * - CORS: allow the frontend (Vite dev server) to call the API with cookies.
@@ -33,6 +37,7 @@ const investmentRoutes = require("./routes/investment.routes")
 const cardRoutes = require("./routes/card.routes")
 const billRoutes = require("./routes/bill.routes")
 const v2Routes = require("./routes/v2.routes")
+const chatbotRoutes = require("./routes/chatbot.routes")
 
 app.get("/", (req, res) => {
     res.send("Tensai SecBank API is up and running")
@@ -52,6 +57,17 @@ app.use("/api/investments", investmentRoutes)
 app.use("/api/cards", cardRoutes)
 app.use("/api/bills", billRoutes)
 app.use("/api", v2Routes)
+app.use("/api/chatbot", chatbotRoutes)
+
+// Telemetry health endpoint — quick check that OTEL initialised.
+app.get("/telemetry/health", (_req, res) => {
+    const t = getTelemetry?.()
+    res.status(200).json({
+        enabled: Boolean(t?.enabled),
+        service: t?.serviceName || null,
+        exporter: t?.endpoint || null
+    })
+})
 
 // Central error handler
 app.use((err, req, res, _next) => {

@@ -9,6 +9,8 @@ const { generateAccountNumber } = require("../services/accountNumber")
 const mpinService = require("../services/mpin.service")
 const rewards = require("../services/rewards.service")
 const emailService = require("../services/email.service")
+const { getTelemetry } = require("../telemetry")
+const t = () => getTelemetry?.()
 
 const JWT_TTL_DAYS = 3
 const COOKIE_OPTS = () => ({
@@ -52,8 +54,10 @@ async function userRegisterController(req, res) {
 
     if (existing.length) {
         const reason = existing[0].email === email.toLowerCase() ? "email" : "mobile number"
+        t()?.metrics?.authFailures?.add(1, { flow: "register", reason: "duplicate" })
         return res.status(422).json({ message: `A user with this ${reason} already exists` })
     }
+    t()?.metrics?.authAttempts?.add(1, { flow: "register" })
 
     const passwordHash = await bcrypt.hash(password, 10)
 
@@ -115,7 +119,10 @@ async function userLoginController(req, res) {
         ))
         .limit(1)
 
+    t()?.metrics?.authAttempts?.add(1, { flow: mpin ? "login.mpin" : "login.password" })
+
     if (rows.length === 0) {
+        t()?.metrics?.authFailures?.add(1, { flow: "login", reason: "unknown_user" })
         return res.status(401).json({ message: "Credentials are invalid" })
     }
 
@@ -123,10 +130,16 @@ async function userLoginController(req, res) {
 
     if (mpin) {
         const v = await mpinService.verifyMpin(user.id, mpin)
-        if (!v.ok) return res.status(401).json({ message: v.message, attemptsRemaining: v.attemptsRemaining })
+        if (!v.ok) {
+            t()?.metrics?.authFailures?.add(1, { flow: "login.mpin", reason: "bad_mpin" })
+            return res.status(401).json({ message: v.message, attemptsRemaining: v.attemptsRemaining })
+        }
     } else {
         const ok = await bcrypt.compare(password, user.passwordHash)
-        if (!ok) return res.status(401).json({ message: "Credentials are invalid" })
+        if (!ok) {
+            t()?.metrics?.authFailures?.add(1, { flow: "login.password", reason: "bad_password" })
+            return res.status(401).json({ message: "Credentials are invalid" })
+        }
     }
 
     const token = signToken(user.id)

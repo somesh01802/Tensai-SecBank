@@ -1,6 +1,8 @@
 const { and, eq, isNull } = require("drizzle-orm")
 const { getDb, schema } = require("../db")
 const rewards = require("../services/rewards.service")
+const { getTelemetry } = require("../telemetry")
+const t = () => getTelemetry?.()
 
 function randomDigits(n) {
     let s = ""
@@ -108,8 +110,10 @@ async function apply(req, res) {
         if (n >= 2) await rewards.awardByCondition(req.user.id, "card.active.gte.2")
     } catch { /* non-fatal */ }
 
+    t()?.metrics?.cardsIssued?.add(1, { category: p.category, type: p.cardType })
     res.status(201).json({ application, card })
     } catch (err) {
+        t()?.metrics?.businessErrors?.add(1, { op: "card.apply", reason: "server_error" })
         console.error("[cardApp.apply] hard error:", err.message, err.stack?.split("\n").slice(0,3).join(" | "))
         return res.status(500).json({ message: "Card application failed: " + err.message })
     }
