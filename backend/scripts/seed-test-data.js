@@ -274,7 +274,12 @@ async function openingDeposit(db, accountId, amount) {
 async function successTx({ db, i, k, userId, primary, secondary, primaryNo, when }) {
     const amount = money(rnd(10, 1500))
     const key = `seed-tx-${i}-${k}-${digits(6)}`
-    const doTransfer = secondary && Math.random() < 0.6
+    let doTransfer = secondary && Math.random() < 0.6
+    if (doTransfer) {
+        // Never overdraw: only transfer if the primary can cover it, else fall back to a deposit.
+        const r = await db.execute(sql`SELECT COALESCE(SUM(CASE WHEN type='CREDIT' THEN amount ELSE -amount END),0) AS bal FROM ledger_entries WHERE account_id = ${primary}`)
+        if (Number((r.rows || r)[0].bal) < Number(amount)) doTransfer = false
+    }
     const fromId = primary
     const toId = doTransfer ? secondary : primary
     const op = doTransfer ? "transfer.internal" : "deposit"
