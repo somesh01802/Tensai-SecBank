@@ -12,14 +12,14 @@ import { apiErrorMessage } from "@/api/client"
 import type {} from "@/types/api"
 import { useAuthStore } from "@/stores/authStore"
 import type { CardProduct } from "@/types/api"
-import { cn } from "@/lib/utils"
+import { cn, formatCurrency } from "@/lib/utils"
 import { EmptyState } from "@/components/EmptyState"
 
 type CardType = "CREDIT" | "DEBIT"
 type Category = "EVERYDAY" | "LIFESTYLE" | "PREMIUM"
 
 const CATEGORIES: { key: Category; title: string; blurb: string; icon: any; color: string }[] = [
-  { key: "EVERYDAY", title: "Everyday / On-the-Go Spending", blurb: "Groceries, fuel, UPI — earn on every rupee.", icon: CreditCard, color: "from-sky-500 to-sky-700" },
+  { key: "EVERYDAY", title: "Everyday / On-the-Go Spending", blurb: "Groceries, fuel, and everyday spending — earn on every dollar.", icon: CreditCard, color: "from-sky-500 to-sky-700" },
   { key: "LIFESTYLE", title: "High-End Lifestyle Perks", blurb: "Lounges, dining, entertainment.", icon: Sparkles, color: "from-purple-500 to-purple-700" },
   { key: "PREMIUM", title: "Premium Lifestyle Offers", blurb: "Bespoke perks for the extraordinary.", icon: Star, color: "from-amber-500 to-orange-600" }
 ]
@@ -141,7 +141,7 @@ export function CardsPage() {
                         </div>
                         <div className="text-right text-xs">
                           <div className="font-semibold">Annual fee</div>
-                          <div>{p.annualFee > 0 ? `₹ ${p.annualFee}` : "Free"}</div>
+                          <div>{p.annualFee > 0 ? formatCurrency(p.annualFee) : "Free"}</div>
                         </div>
                       </div>
                       <ul className="mt-3 space-y-1 text-sm text-slate-600 dark:text-slate-400">

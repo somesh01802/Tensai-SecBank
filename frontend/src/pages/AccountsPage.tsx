@@ -31,7 +31,7 @@ export function AccountsPage() {
             Accounts
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Every account starts ACTIVE with 0 balance in INR.
+            Every account starts ACTIVE with a $0.00 balance.
           </p>
         </div>
         <button

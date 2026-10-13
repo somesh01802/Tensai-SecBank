@@ -27,7 +27,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (email);
 CREATE TABLE IF NOT EXISTS accounts (
     id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    currency   varchar(3) NOT NULL DEFAULT 'INR',
+    currency   varchar(3) NOT NULL DEFAULT 'USD',
     status     account_status NOT NULL DEFAULT 'ACTIVE',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()

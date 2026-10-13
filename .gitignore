@@ -19,3 +19,8 @@ pnpm-debug.log*
 *.local
 coverage/
 .turbo/
+
+# Synthetic test-data credential manifests (never commit)
+backend/scripts/out/
+**/test-credentials*.json
+**/*.credentials.json

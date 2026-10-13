@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "nodemon --watch . --ignore .pg-data --ignore node_modules dev.js",
     "start": "node server.js",
-    "migrate": "node src/db/migrate.js"
+    "migrate": "node src/db/migrate.js",
+    "verify:otel": "node scripts/verify-otel-export.js",
+    "seed:test": "node scripts/seed-test-data.js"
   },
   "keywords": [],
   "author": "",
@@ -14,10 +16,13 @@
   "dependencies": {
     "@electric-sql/pglite": "^0.2.12",
     "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/api-logs": "^0.55.0",
     "@opentelemetry/auto-instrumentations-node": "^0.52.0",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.55.0",
     "@opentelemetry/exporter-metrics-otlp-http": "^0.55.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.55.0",
     "@opentelemetry/resources": "^1.28.0",
+    "@opentelemetry/sdk-logs": "^0.55.0",
     "@opentelemetry/sdk-metrics": "^1.28.0",
     "@opentelemetry/sdk-node": "^0.55.0",
     "@opentelemetry/semantic-conventions": "^1.28.0",

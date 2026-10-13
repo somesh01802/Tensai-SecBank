@@ -47,7 +47,7 @@ async function seedDemoDataForUser(userId, userName) {
             investedAmount: "45000.00",
             currentValue: "49500.00",
             returnPct: "10.00",
-            frequencyLabel: "invested amount · Rs. 45000"
+            frequencyLabel: "invested amount · $45,000"
         }
     ])
 

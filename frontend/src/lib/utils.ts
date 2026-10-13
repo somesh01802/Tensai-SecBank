@@ -4,22 +4,19 @@ export function cn(...inputs: ClassValue[]) {
   return clsx(inputs)
 }
 
-const currencyFormatters: Record<string, Intl.NumberFormat> = {}
+const currencyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+})
 
-export function formatCurrency(amount: number, currency = "INR") {
-  const key = currency
-  if (!currencyFormatters[key]) {
-    currencyFormatters[key] = new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency,
-      maximumFractionDigits: 2
-    })
-  }
-  return currencyFormatters[key].format(amount)
+export function formatCurrency(amount: number, _currency = "USD") {
+  return currencyFormatter.format(amount)
 }
 
 export function formatDate(iso: string) {
-  return new Date(iso).toLocaleString("en-IN", {
+  return new Date(iso).toLocaleString("en-US", {
     dateStyle: "medium",
     timeStyle: "short"
   })

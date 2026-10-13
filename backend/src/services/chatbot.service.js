@@ -27,7 +27,7 @@ const SYSTEM_PROMPT_TEMPLATE = `You are Nexus, Tensai SecBank's in-app AI bankin
 
 STYLE
 - Sound warm, calm, confident. Answers stay concise (2-6 sentences).
-- Use INR formatting (₹ 1,00,000.00). No emojis in body text.
+- Use USD formatting ($ 100,000.00). No emojis in body text.
 - When explaining how to do something inside the app, give clear step-by-step
   instructions naming the exact page, tab, button, and required fields
   from the "APP FLOWS" section below.
@@ -268,7 +268,7 @@ async function buildUserContext(userId) {
         },
         totals: {
             balance: totalBalance,
-            currency: "INR",
+            currency: "USD",
             accountCount: sanitizedAccounts.length,
             openLoanCount: sanitizedLoans.filter((l) => l.status !== "CLOSED" && l.status !== "REJECTED").length,
             activeCardCount: sanitizedCards.filter((c) => !c.isFrozen).length,
@@ -304,10 +304,10 @@ async function buildUserContext(userId) {
 }
 
 /**
- * Format a currency value in Indian style, safe for LLM prompts.
+ * Format a currency value in United States dollar style, safe for LLM prompts.
  */
-function inr(v) {
-    return "₹ " + new Intl.NumberFormat("en-IN", {
+function usd(v) {
+    return "$" + new Intl.NumberFormat("en-US", {
         minimumFractionDigits: 2, maximumFractionDigits: 2
     }).format(Number(v) || 0)
 }
@@ -552,10 +552,10 @@ You'll get a CSV built from the actual filtered transactions with Date, Referenc
     if (has("balance", "how much", "how much money", "funds")) {
         const primary = ctx.primaryAccount
         const lines = [
-            `Your total balance across ${ctx.totals.accountCount} account(s) is ${inr(ctx.totals.balance)}.`
+            `Your total balance across ${ctx.totals.accountCount} account(s) is ${usd(ctx.totals.balance)}.`
         ]
         if (primary) {
-            lines.push(`Primary ${primary.kind || "Savings"} (${primary.accountNumber || "…"}): ${inr(primary.balance)}.`)
+            lines.push(`Primary ${primary.kind || "Savings"} (${primary.accountNumber || "…"}): ${usd(primary.balance)}.`)
         }
         return { text: lines.join(" ") }
     }
@@ -577,7 +577,7 @@ You'll get a CSV built from the actual filtered transactions with Date, Referenc
         const active = ctx.loans.filter((l) => l.status !== "CLOSED" && l.status !== "REJECTED")
         const l = active[0] || ctx.loans[0]
         return {
-            text: `You have ${ctx.loans.length} loan application(s), ${active.length} still active. Latest: principal ${inr(l.principal)} at ${l.interestRate}% p.a. for ${l.tenureMonths} months, monthly EMI ${inr(l.emi)}, status ${l.status}.`
+            text: `You have ${ctx.loans.length} loan application(s), ${active.length} still active. Latest: principal ${usd(l.principal)} at ${l.interestRate}% p.a. for ${l.tenureMonths} months, monthly EMI ${usd(l.emi)}, status ${l.status}.`
         }
     }
 
@@ -586,7 +586,7 @@ You'll get a CSV built from the actual filtered transactions with Date, Referenc
         if (unpaid.length === 0) return { text: "You're all caught up — no unpaid bills right now. Nicely done." }
         const totalDue = unpaid.reduce((s, b) => s + b.amount, 0)
         const next = unpaid[0]
-        return { text: `You have ${unpaid.length} unpaid bill(s) totalling ${inr(totalDue)}. Next one: ${next.billerName} for ${inr(next.amount)}.` }
+        return { text: `You have ${unpaid.length} unpaid bill(s) totalling ${usd(totalDue)}. Next one: ${next.billerName} for ${usd(next.amount)}.` }
     }
 
     if (has("reward", "point")) {
@@ -596,7 +596,7 @@ You'll get a CSV built from the actual filtered transactions with Date, Referenc
     if (has("last transaction", "recent transaction", "recent tx", "last transfer")) {
         const t = ctx.recentTransactions[0]
         if (!t) return { text: "No transactions on your account yet." }
-        return { text: `Your most recent transaction was ${t.direction === "IN" ? "a credit" : "a debit"} of ${inr(t.amount)}${t.description ? " — " + t.description : ""} on ${new Date(t.createdAt).toLocaleDateString("en-IN")}.` }
+        return { text: `Your most recent transaction was ${t.direction === "IN" ? "a credit" : "a debit"} of ${usd(t.amount)}${t.description ? " — " + t.description : ""} on ${new Date(t.createdAt).toLocaleDateString("en-US")}.` }
     }
 
     // Sensitive-credential refusal: only trigger when the user is asking us

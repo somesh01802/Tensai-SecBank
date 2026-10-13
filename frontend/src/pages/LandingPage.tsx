@@ -346,7 +346,7 @@ const SLIDES = [
     eyebrow: "New this week",
     title: "Home upgrades, healthcare, holidays.",
     highlight: "Your goals, one loan.",
-    body: "Personal loans up to ₹40L at industry-best rates. Zero paperwork, instant approval.",
+    body: "Personal loans up to $400,000 at industry-best rates. Zero paperwork, instant approval.",
     cta: "Apply now",
     ctaHref: "/register",
     art: <HeroArtCards />
@@ -480,7 +480,7 @@ function HeroArtSavings() {
           <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
             Available balance
           </div>
-          <div className="mt-1 text-3xl font-extrabold">₹ 1,24,530.00</div>
+          <div className="mt-1 text-3xl font-extrabold">$124,530.00</div>
         </div>
         <div className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
           Active
@@ -495,9 +495,9 @@ function HeroArtSavings() {
       </div>
       <div className="mt-4 space-y-2">
         {[
-          { name: "Salary", amt: "+ ₹ 85,000.00", positive: true },
-          { name: "Landlord — Rent", amt: "− ₹ 25,000.00", positive: false },
-          { name: "Zomato", amt: "− ₹ 640.00", positive: false }
+          { name: "Salary", amt: "+ $85,000.00", positive: true },
+          { name: "Landlord — Rent", amt: "− $25,000.00", positive: false },
+          { name: "Zomato", amt: "− $640.00", positive: false }
         ].map((r) => (
           <div key={r.name} className="flex items-center justify-between rounded-xl border border-slate-100 px-3 py-2 text-sm dark:border-slate-800">
             <span>{r.name}</span>
@@ -520,7 +520,7 @@ function HeroArtAnalytics() {
           <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
             This month
           </div>
-          <div className="mt-1 text-2xl font-extrabold">₹ 42,180 <span className="text-sm font-medium text-emerald-600">↑ 8%</span></div>
+          <div className="mt-1 text-2xl font-extrabold">$42,180 <span className="text-sm font-medium text-emerald-600">↑ 8%</span></div>
         </div>
         <LineChart className="h-6 w-6 text-brand-600" />
       </div>
@@ -551,7 +551,7 @@ const PRODUCTS = [
   { icon: Home, title: "Home loan", body: "8.60% p.a. onward · Balance transfer offer.", tag: "" },
   { icon: Car, title: "Car loan", body: "Instant approval · Up to 100% funding.", tag: "" },
   { icon: GraduationCap, title: "Education loan", body: "Study abroad or in India · Moratorium.", tag: "" },
-  { icon: LineChart, title: "Mutual funds & SIP", body: "Start SIPs from ₹500. Zero commission.", tag: "" },
+  { icon: LineChart, title: "Mutual funds & SIP", body: "Start SIPs from $500. Zero commission.", tag: "" },
   { icon: HeartHandshake, title: "Insurance", body: "Health, term, motor, home — all in one app.", tag: "" }
 ]
 
@@ -608,7 +608,7 @@ function PromoStrip() {
     <section className="border-y border-slate-100 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-900/40">
       <div className="mx-auto grid max-w-7xl gap-6 px-4 py-12 sm:grid-cols-2 sm:px-6 lg:grid-cols-4 lg:px-8">
         {[
-          { icon: ShieldCheck, title: "RBI regulated", body: "Deposits insured up to ₹5L per DICGC." },
+          { icon: ShieldCheck, title: "RBI regulated", body: "Deposits insured up to $500,000 per DICGC." },
           { icon: Lock, title: "256-bit encryption", body: "End-to-end at rest and in transit." },
           { icon: Zap, title: "Instant transfers", body: "IMPS, UPI, and P2P in seconds." },
           { icon: Users, title: "4.6M+ customers", body: "Rated 4.7★ on the App Store." }
@@ -633,7 +633,7 @@ function PromoStrip() {
 function TrustSection() {
   const stats = [
     { n: "4.6M+", l: "Active customers" },
-    { n: "₹ 82,000 Cr", l: "Assets under management" },
+    { n: "$82B", l: "Assets under management" },
     { n: "1,240", l: "Branches nationwide" },
     { n: "99.99%", l: "Uptime · 12-month rolling" }
   ]
@@ -648,7 +648,7 @@ function TrustSection() {
             Built like a bank. Feels like an app.
           </h2>
           <p className="mt-4 max-w-lg text-slate-500 dark:text-slate-400">
-            Every rupee that flows through Tensai SecBank rides an immutable
+            Every dollar that flows through Tensai SecBank rides an immutable
             double-entry ledger with idempotent transfers. Real ACID — not "eventually correct."
           </p>
           <div className="mt-6 flex items-center gap-4">
@@ -741,7 +741,7 @@ function PhoneMock() {
           <div className="mt-5 text-[10px] font-bold uppercase tracking-widest text-white/50">
             Available
           </div>
-          <div className="mt-1 text-2xl font-extrabold text-white">₹ 1,24,530</div>
+          <div className="mt-1 text-2xl font-extrabold text-white">$124,530</div>
           <div className="mt-4 grid grid-cols-3 gap-1 text-center text-[9px] font-semibold text-white/80">
             {["Send", "Pay", "Save"].map((l) => (
               <div key={l} className="rounded-lg bg-white/10 py-2 backdrop-blur">

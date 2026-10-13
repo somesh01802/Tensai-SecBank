@@ -503,7 +503,7 @@ function InternalTransferPanel({ accounts, onDone }: { accounts: Account[]; onDo
         </div>
         <div className="md:col-span-2"><label className="label">Amount</label>
           <div className="relative">
-            <span className="absolute inset-y-0 left-4 flex items-center text-slate-400">₹</span>
+            <span className="absolute inset-y-0 left-4 flex items-center text-slate-400">$</span>
             <input className="input pl-8 text-lg font-semibold" inputMode="decimal" placeholder="0.00" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))} />
           </div>
           {insufficient && <div className="mt-1.5 text-xs text-rose-600">Insufficient balance</div>}

@@ -134,7 +134,7 @@ export function RewardsPage() {
                   {t.completedAt && (
                     <>
                       <span>·</span>
-                      <span>Completed {new Date(t.completedAt).toLocaleDateString("en-IN")}</span>
+                      <span>Completed {new Date(t.completedAt).toLocaleDateString("en-US")}</span>
                     </>
                   )}
                 </div>

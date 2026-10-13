@@ -76,7 +76,6 @@ export function DashboardPage() {
     </div>
   )
 }
-
 /* --------------------------------------------------------------------- */
 /*                           BALANCE  +  ACTIONS                          */
 /* --------------------------------------------------------------------- */
@@ -114,7 +113,7 @@ function BalanceCard({
             <div className="skeleton mt-2 h-10 w-56" />
           ) : (
             <div className="mt-1 text-4xl font-extrabold tracking-tight text-slate-900 dark:text-slate-50">
-              {revealed ? `Rs. ${formatIndianNumber(total)}` : "Rs. •••••••"}
+              {revealed ? formatCurrency(total) : "$ •••••••"}
             </div>
           )}
           {summary?.primaryAccount && (
@@ -171,7 +170,7 @@ function ReceiveMoneyModal({
       idempotencyKey
     }),
     onSuccess: (tx) => {
-      toast.success(`Rs. ${tx.amount.toFixed(2)} credited to your primary account`)
+      toast.success(`${formatCurrency(tx.amount)} credited to your primary account`)
       queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] })
       queryClient.invalidateQueries({ queryKey: ["accounts"] })
       queryClient.invalidateQueries({ queryKey: ["transactions"] })
@@ -201,7 +200,7 @@ function ReceiveMoneyModal({
             <div>
               <label className="label">Amount</label>
               <div className="relative">
-                <span className="absolute inset-y-0 left-4 flex items-center text-slate-400">₹</span>
+                <span className="absolute inset-y-0 left-4 flex items-center text-slate-400">$</span>
                 <input
                   className="input pl-8 text-lg font-semibold"
                   inputMode="decimal"
@@ -230,7 +229,7 @@ function ReceiveMoneyModal({
             <div className="rounded-xl bg-emerald-50 p-4 dark:bg-emerald-500/10">
               <div className="text-xs font-semibold uppercase tracking-widest text-emerald-700 dark:text-emerald-300">Confirm deposit</div>
               <div className="mt-2 flex items-baseline gap-2">
-                <span className="text-3xl font-black text-emerald-700 dark:text-emerald-300">₹ {Number(amount).toFixed(2)}</span>
+                <span className="text-3xl font-black text-emerald-700 dark:text-emerald-300">{formatCurrency(Number(amount))}</span>
               </div>
               <div className="mt-2 text-xs text-emerald-800 dark:text-emerald-200">
                 To {primaryAccountNumber || "your primary account"}
@@ -314,7 +313,7 @@ function InvestmentsCard({
               </div>
               <div className="text-right">
                 <div className="text-sm font-bold">
-                  Rs. {formatIndianNumber(i.currentValue)}
+                  {formatCurrency(i.currentValue)}
                 </div>
                 {i.returnPct != null && (
                   <div className="mt-0.5 text-[11px] font-semibold text-emerald-600">
@@ -389,7 +388,7 @@ function ExpenditureCard({
                     borderRadius: 12,
                     fontSize: 12
                   }}
-                  formatter={(v: number) => `Rs. ${formatIndianNumber(v)}`}
+                  formatter={(v: number) => formatCurrency(v)}
                 />
                 <Pie
                   data={data}
@@ -450,7 +449,7 @@ function StatisticsCard({
     const points = statsQ.data?.points ?? []
     if (points.length >= 2) {
       return points.map((p) => ({
-        day: new Date(p.ts).toLocaleDateString("en-IN", {
+        day: new Date(p.ts).toLocaleDateString("en-US", {
           day: "2-digit",
           month: "short",
           ...(range === "1D" ? { hour: "numeric" } : {})
@@ -459,7 +458,7 @@ function StatisticsCard({
       }))
     }
     return points.map((p) => ({
-      day: new Date(p.ts).toLocaleDateString("en-IN", { day: "2-digit", month: "short" }),
+      day: new Date(p.ts).toLocaleDateString("en-US", { day: "2-digit", month: "short" }),
       balance: p.balance
     }))
   }, [statsQ.data, range])
@@ -468,7 +467,7 @@ function StatisticsCard({
     const now = new Date()
     const days = { "1D": 1, "1W": 7, "1M": 30, "1Y": 365 }[range]
     const start = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-    const fmt = (d: Date) => d.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })
+    const fmt = (d: Date) => d.toLocaleDateString("en-US", { day: "2-digit", month: "short" })
     return `${fmt(start)} – ${fmt(now)}`
   }, [range])
 
@@ -544,7 +543,7 @@ function StatisticsCard({
                   borderRadius: 12,
                   fontSize: 12
                 }}
-                formatter={(v: number) => `Rs. ${formatIndianNumber(v)}`}
+                formatter={(v: number) => formatCurrency(v)}
               />
               <Area
                 type="monotone"
@@ -811,7 +810,7 @@ function RecentTransactionsCard({
                     {t.description || (isIn ? "Received" : "Sent")}
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    {new Date(t.createdAt).toLocaleTimeString("en-IN", {
+                    {new Date(t.createdAt).toLocaleTimeString("en-US", {
                       hour: "2-digit",
                       minute: "2-digit",
                       hour12: false
@@ -824,7 +823,7 @@ function RecentTransactionsCard({
                     (isIn ? "text-emerald-600" : "text-slate-900 dark:text-slate-100")
                   }
                 >
-                  {isIn ? "+ " : "- "}Rs. {formatIndianNumber(t.amount)}
+                  {isIn ? "+ " : "- "}{formatCurrency(t.amount)}
                 </div>
               </li>
             )
@@ -892,7 +891,7 @@ function BillsCard({
                 <div className="truncate text-sm font-semibold">{b.billerName}</div>
                 <div className="text-[11px] text-slate-500">
                   {b.dueDate
-                    ? new Date(b.dueDate).toLocaleDateString("en-IN", {
+                    ? new Date(b.dueDate).toLocaleDateString("en-US", {
                         day: "2-digit",
                         month: "short"
                       })
@@ -900,7 +899,7 @@ function BillsCard({
                 </div>
               </div>
               <div className="flex flex-col items-end">
-                <div className="text-sm font-bold">Rs. {formatIndianNumber(b.amount)}</div>
+                <div className="text-sm font-bold">{formatCurrency(b.amount)}</div>
                 <button
                   onClick={() => pay.mutate(b.id)}
                   disabled={payingId === b.id || !primary}
@@ -932,10 +931,3 @@ function initials(name: string) {
     .toUpperCase()
 }
 
-function formatIndianNumber(n: number) {
-  // Indian locale grouping (1,23,456.78)
-  return new Intl.NumberFormat("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(n)
-}

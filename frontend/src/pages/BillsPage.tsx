@@ -167,7 +167,7 @@ function RecurringBills({
                 <div className="min-w-0 flex-1">
                   <div className="font-semibold">{b.billerName}</div>
                   <div className="text-xs text-slate-500">
-                    {b.frequency.toLowerCase()} · next {new Date(b.nextRunAt).toLocaleDateString("en-IN")} · {b.autopayEnabled ? "AutoPay ON" : "Manual"}
+                    {b.frequency.toLowerCase()} · next {new Date(b.nextRunAt).toLocaleDateString("en-US")} · {b.autopayEnabled ? "AutoPay ON" : "Manual"}
                     {b.autoDetectAmount && " · auto-detect"}
                   </div>
                 </div>

@@ -52,7 +52,7 @@ export function NotificationsPage() {
                 <div className="font-semibold">{n.title}</div>
                 <div className="text-sm text-slate-500 dark:text-slate-400">{n.body}</div>
                 <div className="mt-1 text-[11px] text-slate-400">
-                  {n.category} · {new Date(n.createdAt).toLocaleString("en-IN")}
+                  {n.category} · {new Date(n.createdAt).toLocaleString("en-US")}
                 </div>
                 {n.actionUrl && (
                   <Link to={n.actionUrl} className="mt-2 inline-block text-xs font-semibold text-brand-600 hover:underline">

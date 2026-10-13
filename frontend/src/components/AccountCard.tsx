@@ -52,7 +52,7 @@ export function AccountCard({ account, highlight }: { account: Account; highligh
           <Copy className="h-3 w-3" />
         </button>
         <div className="text-[11px] font-medium text-white/70">
-          Opened {new Date(account.createdAt).toLocaleDateString("en-IN")}
+          Opened {new Date(account.createdAt).toLocaleDateString("en-US")}
         </div>
       </div>
     </div>

@@ -83,6 +83,9 @@ async function createTransaction(req, res) {
     // Optional demo delay (keeps the frontend's 15s pending-state UX meaningful)
     if (SIMULATION_DELAY_MS > 0) await sleep(SIMULATION_DELAY_MS)
 
+    const startedAt = Date.now()
+    const last4 = (acc) => (acc?.accountNumber ? String(acc.accountNumber).slice(-4) : undefined)
+
     // 3. ACID: everything below either all commits or all rolls back.
     let completed
     try {
@@ -139,13 +142,21 @@ async function createTransaction(req, res) {
             return updated
         })
     } catch (err) {
+        const common = {
+            userId: req.user.id, operation: "transfer.internal",
+            fromLast4: last4(fromAcc[0]), toLast4: last4(toAcc[0]),
+            amount: amt, currency: fromAcc[0].currency || "USD",
+            outcome: "FAILURE", status: "FAILED",
+            endpoint: "POST /api/transactions",
+            durationMs: Date.now() - startedAt, startTimeMs: startedAt
+        }
         if (err.code === "INSUFFICIENT_BALANCE") {
-            t()?.metrics?.businessErrors?.add(1, { op: "transfer.internal", reason: "insufficient_balance" })
+            t()?.recordTransaction?.({ ...common, errorCategory: "INSUFFICIENT_FUNDS", failureReason: "insufficient balance" })
             return res.status(400).json({
                 message: `Insufficient balance. Available: ${err.available}, Requested: ${amt}`
             })
         }
-        t()?.metrics?.businessErrors?.add(1, { op: "transfer.internal", reason: "unknown" })
+        t()?.recordTransaction?.({ ...common, errorCategory: "INTERNAL_ERROR", failureReason: err.message })
         console.error("[transaction] failed:", err)
         return res.status(500).json({ message: "Transaction failed, please retry" })
     }
@@ -155,8 +166,14 @@ async function createTransaction(req, res) {
         .sendTransactionEmail(req.user.email, req.user.name, amt, toAccount)
         .catch(() => {})
 
-    t()?.metrics?.transfers?.add(1, { kind: "internal", status: "COMPLETED" })
-    t()?.metrics?.transferAmount?.record(amt, { kind: "internal" })
+    t()?.recordTransaction?.({
+        transactionId: completed.id, userId: req.user.id, operation: "transfer.internal",
+        fromLast4: last4(fromAcc[0]), toLast4: last4(toAcc[0]),
+        amount: amt, currency: fromAcc[0].currency || "USD",
+        outcome: "SUCCESS", status: "COMPLETED",
+        endpoint: "POST /api/transactions",
+        durationMs: Date.now() - startedAt, startTimeMs: startedAt
+    })
 
     return res.status(201).json({
         message: "Transaction completed successfully",

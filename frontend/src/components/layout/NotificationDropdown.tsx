@@ -61,7 +61,7 @@ export function NotificationDropdown({
                     <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-400">
                       <span>{n.category}</span>
                       <span>·</span>
-                      <span>{new Date(n.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
+                      <span>{new Date(n.createdAt).toLocaleDateString("en-US", { day: "numeric", month: "short" })}</span>
                       {n.actionUrl && (
                         <>
                           <span>·</span>

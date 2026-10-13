@@ -61,7 +61,7 @@ export function AnalyticsPage() {
       running += e.type === "CREDIT" ? e.amount : -e.amount
       const tx = typeof e.transaction === "object" ? e.transaction : null
       return {
-        date: tx?.createdAt ? new Date(tx.createdAt).toLocaleDateString("en-IN") : "",
+        date: tx?.createdAt ? new Date(tx.createdAt).toLocaleDateString("en-US") : "",
         balance: running,
         amount: e.amount,
         type: e.type
@@ -74,7 +74,7 @@ export function AnalyticsPage() {
     ;(txQ.data ?? [])
       .filter((t) => t.status === "COMPLETED")
       .forEach((t) => {
-        const day = new Date(t.createdAt).toLocaleDateString("en-IN", {
+        const day = new Date(t.createdAt).toLocaleDateString("en-US", {
           month: "short",
           day: "numeric"
         })

@@ -83,7 +83,7 @@ const accounts = pgTable(
         userId: uuid("user_id")
             .notNull()
             .references(() => users.id, { onDelete: "cascade" }),
-        currency: varchar("currency", { length: 3 }).notNull().default("INR"),
+        currency: varchar("currency", { length: 3 }).notNull().default("USD"),
         status: accountStatus("status").notNull().default("ACTIVE"),
         accountNumber: varchar("account_number", { length: 12 }),
         kind: accountKind("kind").notNull().default("SAVINGS"),

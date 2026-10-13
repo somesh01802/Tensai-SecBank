@@ -109,7 +109,7 @@ export function TransactionsPage() {
 
   const rangeLabel = useMemo(() => {
     if (!from && !to) return "All time"
-    const fmt = (s: string) => new Date(s).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })
+    const fmt = (s: string) => new Date(s).toLocaleDateString("en-US", { day: "2-digit", month: "short", year: "numeric" })
     return `${from ? fmt(from) : "…"} → ${to ? fmt(to) : "…"}`
   }, [from, to])
 

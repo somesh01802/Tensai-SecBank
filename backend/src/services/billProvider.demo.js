@@ -36,7 +36,7 @@ async function fetchAmount({ billerName, category }) {
     return {
         source: "demo-provider",
         amount: Math.round(amt * 100) / 100,
-        currency: "INR",
+        currency: "USD",
         fetchedAt: new Date().toISOString()
     }
 }
