@@ -1,0 +1,22 @@
+{
+  "name": "tensai/secbank-api",
+  "description": "Tensai SecBank API (PHP port of the Node backend)",
+  "type": "project",
+  "require": {
+    "php": ">=8.1",
+    "ext-pdo": "*",
+    "ext-pdo_pgsql": "*",
+    "ext-curl": "*",
+    "ext-mbstring": "*",
+    "slim/slim": "^4.12",
+    "slim/psr7": "^1.6",
+    "vlucas/phpdotenv": "^5.6"
+  },
+  "autoload": {
+    "psr-4": { "Tensai\\": "src/" }
+  },
+  "config": {
+    "optimize-autoloader": true,
+    "sort-packages": true
+  }
+}
