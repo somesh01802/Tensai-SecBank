@@ -13,6 +13,8 @@ use Slim\Psr7\Response as SlimResponse;
  */
 class Auth
 {
+    public function __construct(private bool $requireSystem = false) {}
+
     public function __invoke(Request $req, Handler $handler): Response
     {
         $token = self::bearer($req) ?? ($req->getCookieParams()['token'] ?? null);
@@ -30,6 +32,11 @@ class Auth
             [':id' => $userId]
         );
         if (!$user) return self::unauth('Unauthorized: user not found');
+
+        if ($this->requireSystem && ($user['isSystemUser'] ?? false) !== true) {
+            $res = new SlimResponse();
+            return Http::json($res, ['message' => 'Forbidden: system user required'], 403);
+        }
 
         $req = $req->withAttribute('user', $user)->withAttribute('token', $token);
         return $handler->handle($req);

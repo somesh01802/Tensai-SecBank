@@ -85,4 +85,13 @@ class Db
     {
         return lcfirst(str_replace(' ', '', ucwords(str_replace('_', ' ', $s))));
     }
+
+    /** Cast the given camelCase keys of a row to float (PG numerics come back as strings). */
+    public static function floats(array $row, array $keys): array
+    {
+        foreach ($keys as $k) {
+            if (array_key_exists($k, $row) && $row[$k] !== null) $row[$k] = (float) $row[$k];
+        }
+        return $row;
+    }
 }
