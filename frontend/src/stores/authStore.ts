@@ -1,6 +1,16 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import type { User } from "@/types/api"
+import { apm } from "@/apm"
+
+/** Tell Elastic RUM who the current user is (shows as user.name in Kibana). */
+export function setApmUser(user: User | null) {
+  try {
+    apm.setUserContext(user ? { id: String(user.id), username: user.name, email: user.email } : {})
+  } catch {
+    /* RUM disabled / not initialized — ignore */
+  }
+}
 
 interface AuthState {
   user: User | null
@@ -22,12 +32,21 @@ export const useAuthStore = create<AuthState>()(
       token: null,
       hasMpin: false,
       justAuthed: false,
-      setAuth: (user, token, hasMpin) => set({ user, token, hasMpin: Boolean(hasMpin), justAuthed: true }),
-      setUser: (user) => set({ user }),
+      setAuth: (user, token, hasMpin) => {
+        setApmUser(user)
+        set({ user, token, hasMpin: Boolean(hasMpin), justAuthed: true })
+      },
+      setUser: (user) => {
+        setApmUser(user)
+        set({ user })
+      },
       setHasMpin: (v) => set({ hasMpin: v }),
       markJustAuthed: () => set({ justAuthed: true }),
       clearJustAuthed: () => set({ justAuthed: false }),
-      clear: () => set({ user: null, token: null, hasMpin: false, justAuthed: false })
+      clear: () => {
+        setApmUser(null)
+        set({ user: null, token: null, hasMpin: false, justAuthed: false })
+      }
     }),
     {
       name: "ledger-auth",

@@ -3,7 +3,7 @@ namespace Tensai\Controllers;
 
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Message\ResponseInterface as Response;
-use Tensai\{Db, Http, Token, Mpin, Provision, ApiError};
+use Tensai\{Db, Http, Token, Mpin, Provision, ApiError, Apm};
 
 class AuthController
 {
@@ -45,6 +45,7 @@ class AuthController
         }
 
         $token = Token::sign($user['id']);
+        $this->track($req, $user, 'register', 'password', 'success');
         $res = Http::json($res, ['user' => $user, 'token' => $token, 'needsMpin' => true], 201);
         return $this->withAuthCookie($res, $token);
     }
@@ -64,13 +65,21 @@ class AuthController
         );
         if (!$user) throw new ApiError('Credentials are invalid', 401);
 
+        $method = $mpin ? 'mpin' : 'password';
         if ($mpin) {
             $v = Mpin::verify($user['id'], $mpin);
-            if (!$v['ok']) throw new ApiError($v['message'], 401, isset($v['attemptsRemaining']) ? ['attemptsRemaining' => $v['attemptsRemaining']] : null);
+            if (!$v['ok']) {
+                $this->track($req, $user, 'login', $method, 'failure');
+                throw new ApiError($v['message'], 401, isset($v['attemptsRemaining']) ? ['attemptsRemaining' => $v['attemptsRemaining']] : null);
+            }
         } else {
-            if (!password_verify($password, $user['passwordHash'])) throw new ApiError('Credentials are invalid', 401);
+            if (!password_verify($password, $user['passwordHash'])) {
+                $this->track($req, $user, 'login', $method, 'failure');
+                throw new ApiError('Credentials are invalid', 401);
+            }
         }
 
+        $this->track($req, $user, 'login', $method, 'success');
         $token = Token::sign($user['id']);
         $res = Http::json($res, [
             'user' => ['id' => $user['id'], 'email' => $user['email'], 'name' => $user['name'], 'mobileNumber' => $user['mobileNumber']],
@@ -117,6 +126,45 @@ class AuthController
     {
         $u = $req->getAttribute('user');
         return Http::json($res, ['hasMpin' => Mpin::has($u['id'])]);
+    }
+
+    /**
+     * Persist a login/register event and mirror it to Elastic APM so Kibana
+     * shows the username, the running login count, and the timestamp for every
+     * attempt (success or failure). DB write is best-effort — auth never fails
+     * because telemetry failed.
+     */
+    private function track(Request $req, array $user, string $event, string $method, string $outcome): void
+    {
+        $ip = $req->getHeaderLine('X-Forwarded-For')
+            ?: ($req->getServerParams()['REMOTE_ADDR'] ?? null);
+        try {
+            Db::run(
+                'INSERT INTO login_events (user_id, username, email, event, outcome, method, ip)
+                 VALUES (:uid,:un,:em,:ev,:oc,:m,:ip)',
+                [':uid' => $user['id'], ':un' => $user['name'], ':em' => $user['email'] ?? null,
+                 ':ev' => $event, ':oc' => $outcome, ':m' => $method, ':ip' => $ip]
+            );
+        } catch (\Throwable $e) {
+            error_log('[auth.track] ' . $e->getMessage());
+        }
+
+        $count = 0;
+        try {
+            $row = Db::one(
+                "SELECT count(*) AS c FROM login_events
+                 WHERE user_id = :uid AND event = 'login' AND outcome = 'success'",
+                [':uid' => $user['id']]
+            );
+            $count = (int) ($row['c'] ?? 0);
+        } catch (\Throwable $e) { /* ignore */ }
+
+        Apm::setUser($user['id'], $user['name'], $user['email'] ?? null);
+        Apm::name('POST /api/auth/' . $event);
+        Apm::label('auth.event', $event);
+        Apm::label('auth.method', $method);
+        Apm::label('auth.outcome', $outcome);
+        Apm::label('auth.login_count', $count);
     }
 
     private function withAuthCookie(Response $res, string $token): Response

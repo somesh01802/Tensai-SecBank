@@ -32,7 +32,9 @@ function app(): \Slim\App
         return $res
             ->withHeader('Access-Control-Allow-Origin', $allow)
             ->withHeader('Access-Control-Allow-Credentials', 'true')
-            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+            // traceparent/tracestate/elastic-apm-traceparent let the browser RUM
+            // agent correlate its transaction with the PHP backend (distributed tracing).
+            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, traceparent, tracestate, elastic-apm-traceparent')
             ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
     });
 
@@ -51,6 +53,7 @@ function app(): \Slim\App
             return Http::json($res, ['message' => 'Method not allowed'], 405);
         }
         error_log('[api] ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+        Apm::error($e); // surface unexpected 500s under Kibana APM → Errors
         return Http::json($res, ['message' => 'Internal server error'], 500);
     });
 

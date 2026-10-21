@@ -38,6 +38,9 @@ class Auth
             return Http::json($res, ['message' => 'Forbidden: system user required'], 403);
         }
 
+        // Attribute this request's APM transaction to the user (user.* in Kibana).
+        Apm::setUser($user['id'], $user['name'], $user['email'] ?? null);
+
         $req = $req->withAttribute('user', $user)->withAttribute('token', $token);
         return $handler->handle($req);
     }
