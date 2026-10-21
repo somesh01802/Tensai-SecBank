@@ -49,6 +49,21 @@ final class Apm
         try { $tx->setName($name); } catch (\Throwable $e) {}
     }
 
+    /**
+     * Business failure (4xx ApiError): mark the transaction outcome "failure"
+     * (Kibana's failed-transaction rate only counts 5xx by default), label the
+     * reason, and record it under Errors so failures are grouped by message.
+     */
+    public static function failure(\Throwable $e): void
+    {
+        $tx = self::tx();
+        if ($tx) {
+            try { if (method_exists($tx, 'setOutcome')) $tx->setOutcome('failure'); } catch (\Throwable $x) {}
+        }
+        self::label('failure_reason', substr($e->getMessage(), 0, 200));
+        self::error($e);
+    }
+
     /** Report a server-side error to APM (shows under Errors in Kibana). */
     public static function error(\Throwable $e): void
     {

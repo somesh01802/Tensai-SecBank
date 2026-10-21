@@ -59,11 +59,11 @@ return function (App $app): void {
         // ---- accounts ----
         $g->post('/accounts', [$acc, 'create'])->add($auth);
         $g->get('/accounts', [$acc, 'list'])->add($auth);
-        $g->get('/accounts/balance/{accountId}', [$acc, 'balance'])->add($auth);
-        $g->get('/accounts/{accountId}/detail', [$acc, 'detail'])->add($auth);
-        $g->get('/accounts/{accountId}/ledger', [$acc, 'ledger'])->add($auth);
-        $g->patch('/accounts/{accountId}', [$acc, 'rename'])->add($auth);
-        $g->post('/accounts/{accountId}/close', [$acc, 'close'])->add($auth);
+        $g->get('/accounts/balance/{id}', [$acc, 'balance'])->add($auth);
+        $g->get('/accounts/{id}/detail', [$acc, 'detail'])->add($auth);
+        $g->get('/accounts/{id}/ledger', [$acc, 'ledger'])->add($auth);
+        $g->patch('/accounts/{id}', [$acc, 'rename'])->add($auth);
+        $g->post('/accounts/{id}/close', [$acc, 'close'])->add($auth);
 
         // ---- transactions ----
         $g->get('/transactions/statement.csv', [$tx, 'statement'])->add($auth);

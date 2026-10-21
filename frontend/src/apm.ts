@@ -12,6 +12,22 @@ import { init as initApm } from "@elastic/apm-rum"
  */
 const env = import.meta.env as Record<string, string | undefined>
 
+// Origins that get the W3C traceparent/tracestate headers so the browser
+// transaction links to the PHP backend transaction (distributed tracing).
+// Always includes the SSH-tunnel origin, the page's own origin and the API
+// origin (if VITE_API_BASE_URL is absolute), plus anything in VITE_ELASTIC_RUM_ORIGINS.
+function tracingOrigins(): string[] {
+  const list = ["http://localhost:8088", window.location.origin]
+  try {
+    const api = env.VITE_API_BASE_URL
+    if (api && /^https?:\/\//.test(api)) list.push(new URL(api).origin)
+  } catch {
+    /* relative base URL — same origin, already covered */
+  }
+  for (const o of (env.VITE_ELASTIC_RUM_ORIGINS || "").split(",")) if (o.trim()) list.push(o.trim())
+  return [...new Set(list)]
+}
+
 export const apm = initApm({
   serviceName: env.VITE_ELASTIC_RUM_SERVICE_NAME || "tensai-secbank-web",
   serverUrl:
@@ -20,8 +36,6 @@ export const apm = initApm({
   serviceVersion: env.VITE_ELASTIC_RUM_SERVICE_VERSION || "0.1.0",
   environment: env.VITE_ELASTIC_RUM_ENVIRONMENT || env.MODE || "production",
   // Distributed tracing: correlate the browser transaction with the PHP backend.
-  distributedTracingOrigins: (env.VITE_ELASTIC_RUM_ORIGINS || "")
-    .split(",")
-    .map((o) => o.trim())
-    .filter(Boolean),
+  distributedTracingOrigins: tracingOrigins(),
+  propagateTracestate: true,
 })
