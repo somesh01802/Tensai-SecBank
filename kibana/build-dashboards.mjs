@@ -28,10 +28,12 @@ const outcomeFlag = (field, value) =>
 const DV = {
   txn: { id: "tensai-dv-transactions", title: "tensai-transactions", name: "Tensai · Transactions",
     runtime: { txn_success: { type: "long", script: { source: outcomeFlag("status", "COMPLETED") } } } },
-  users: { id: "tensai-dv-users", title: "tensai-users", name: "Tensai · Users" },
+  // users / accounts are current-state snapshots, not events: no time field, so the
+  // time picker never hides them (all 5000+ customers always visible).
+  users: { id: "tensai-dv-users", title: "tensai-users", name: "Tensai · Users", timeField: null },
   logins: { id: "tensai-dv-login-events", title: "tensai-login-events", name: "Tensai · Login events",
     runtime: { login_failed: { type: "long", script: { source: outcomeFlag("outcome", "failure") } } } },
-  accounts: { id: "tensai-dv-accounts", title: "tensai-accounts", name: "Tensai · Accounts" },
+  accounts: { id: "tensai-dv-accounts", title: "tensai-accounts", name: "Tensai · Accounts", timeField: null },
   apm: { id: "tensai-dv-apm-traces", title: "traces-apm*", name: "Tensai · APM traces",
     runtime: {
       apm_failed: { type: "long", script: { source: outcomeFlag("event.outcome", "failure") } },
@@ -42,7 +44,7 @@ const DV = {
 
 const dataView = (d) => ({
   id: d.id, type: "index-pattern", ...MIG, typeMigrationVersion: "8.0.0", references: [],
-  attributes: { title: d.title, name: d.name, timeFieldName: "@timestamp", allowNoIndex: true, fields: "[]",
+  attributes: { title: d.title, name: d.name, ...(d.timeField === null ? {} : { timeFieldName: "@timestamp" }), allowNoIndex: true, fields: "[]",
     fieldFormatMap: "{}", runtimeFieldMap: JSON.stringify(d.runtime || {}), sourceFilters: "[]" },
 })
 
@@ -172,6 +174,8 @@ const b = {
   txnSuccess: metric("tensai-b-success", "Transaction Success Rate", "txn", agg("average", "txn_success", "Success rate", fmt.pct), "", "status = COMPLETED"),
   // Distinct customers who logged in during the selected time range (live, follows activity).
   customers: metric("tensai-b-customers", "Active Customers", "logins", agg("unique_count", "user_id", "Customers", fmt.int), LOGIN_OK),
+  totalCustomers: metric("tensai-b-total-customers", "Total Customers", "users", count("Customers"), "not is_system_user : true", "all time"),
+  totalBalance: metric("tensai-b-total-balance", "Total Deposits", "accounts", agg("sum", "balance", "Balance ($)"), 'status : "ACTIVE"', "all active accounts"),
   logins: metric("tensai-b-logins", "Successful Logins", "logins", count("Logins"), LOGIN_OK),
   failedLogins: metric("tensai-b-failed-logins", "Failed Logins", "logins", count("Failed logins"), LOGIN_FAIL),
 
@@ -216,7 +220,7 @@ const b = {
 
 const dash1 = dashboard("tensai-dashboard-business", "Tensai SecBank — Business Overview",
   "Customers, transactions, accounts and logins exported from Postgres (bin/export-to-elastic.php).", [
-    [6, [b.totalTxn, 8], [b.volume, 8], [b.txnSuccess, 8], [b.customers, 8], [b.logins, 8], [b.failedLogins, 8]],
+    [6, [b.totalCustomers, 6], [b.totalBalance, 6], [b.totalTxn, 6], [b.volume, 6], [b.txnSuccess, 6], [b.customers, 6], [b.logins, 6], [b.failedLogins, 6]],
     [13, [b.txnTrend, 32], [b.byType, 16]],
     [12, [b.loginTrend, 24], [b.topCustomers, 24]],
     [14, [b.loginActivity, 24], [b.recentLogins, 24]],

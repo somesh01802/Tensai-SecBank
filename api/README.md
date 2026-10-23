@@ -60,6 +60,7 @@ Alias /api /var/www/tensai/api/public
 <Directory /var/www/tensai/api/public>
     Require all granted
     FallbackResource /api/index.php     # front controller: fixes statement.csv etc.
+    CGIPassAuth On                      # pass "Authorization: Bearer" to php-fpm (dropped by default)
 </Directory>
 
 # SPA fallback for client-side routes.

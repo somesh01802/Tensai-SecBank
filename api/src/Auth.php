@@ -47,7 +47,11 @@ class Auth
 
     public static function bearer(Request $req): ?string
     {
-        $h = $req->getHeaderLine('Authorization');
+        // Apache + php-fpm drop the Authorization header unless `CGIPassAuth On`
+        // (see api/README.md); after a FallbackResource internal redirect it can
+        // arrive as REDIRECT_HTTP_AUTHORIZATION instead.
+        $h = $req->getHeaderLine('Authorization')
+            ?: (string) ($req->getServerParams()['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
         if (stripos($h, 'Bearer ') === 0) return substr($h, 7);
         return null;
     }
