@@ -1,0 +1,22 @@
+# Continuous synthetic traffic for the Kibana dashboards (api/bin/traffic.php).
+# One instance per worker; each worker has its own pool of load-test users.
+#   sudo cp deploy/tensai-traffic@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tensai-traffic@1 tensai-traffic@2 tensai-traffic@3
+# Stop: sudo systemctl disable --now 'tensai-traffic@*'
+[Unit]
+Description=Tensai SecBank synthetic traffic (worker %i)
+After=network-online.target apache2.service php8.1-fpm.service postgresql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/tensai-secbank/api
+# ~1 request/second per worker. Each run lasts 60 min, then systemd restarts it.
+ExecStart=/usr/bin/php bin/traffic.php --worker=%i --users=25 --minutes=60 --think-ms=800
+Restart=always
+RestartSec=5
+User=www-data
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

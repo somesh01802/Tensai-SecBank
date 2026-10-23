@@ -49,7 +49,7 @@ const dataView = (d) => ({
 // ---------- Lens columns ----------
 const count = (label, kql) => ({
   label, customLabel: true, dataType: "number", operationType: "count", isBucketed: false, scale: "ratio",
-  sourceField: "___records___", params: { emptyAsNull: true, format: fmt.int },
+  sourceField: "___records___", params: { emptyAsNull: false, format: fmt.int }, // 0, not "N/A"
   ...(kql ? { filter: { language: "kuery", query: kql } } : {}),
 })
 const agg = (op, field, label, format = fmt.num, extra = {}) => ({
@@ -170,7 +170,8 @@ const b = {
   totalTxn: metric("tensai-b-total-txn", "Total Transactions", "txn", count("Transactions")),
   volume: metric("tensai-b-volume", "Transaction Volume", "txn", agg("sum", "amount", "Volume ($)")),
   txnSuccess: metric("tensai-b-success", "Transaction Success Rate", "txn", agg("average", "txn_success", "Success rate", fmt.pct), "", "status = COMPLETED"),
-  customers: metric("tensai-b-customers", "Customers", "users", agg("unique_count", "user_id", "Customers", fmt.int), "not is_system_user : true"),
+  // Distinct customers who logged in during the selected time range (live, follows activity).
+  customers: metric("tensai-b-customers", "Active Customers", "logins", agg("unique_count", "user_id", "Customers", fmt.int), LOGIN_OK),
   logins: metric("tensai-b-logins", "Successful Logins", "logins", count("Logins"), LOGIN_OK),
   failedLogins: metric("tensai-b-failed-logins", "Failed Logins", "logins", count("Failed logins"), LOGIN_FAIL),
 
@@ -301,6 +302,12 @@ for (const d of [dash1, dash2]) {
     if (!names.has(`${p.panelIndex}:${p.panelRefName}`)) throw new Error(`${d.id}: panel ${p.panelIndex} has no reference`)
 }
 
-const out = fileURLToPath(new URL("./tensai-dashboards.ndjson", import.meta.url))
-writeFileSync(out, objects.map((o) => JSON.stringify(o)).join("\n") + "\n")
-console.log(`wrote ${objects.length} saved objects → ${out}`)
+const write = (file, objs) => {
+  const out = fileURLToPath(new URL(file, import.meta.url))
+  writeFileSync(out, objs.map((o) => JSON.stringify(o)).join("\n") + "\n")
+  console.log(`wrote ${objs.length} saved objects → ${out}`)
+}
+write("./tensai-dashboards.ndjson", objects)
+// Same objects minus the dashboards: re-importing this updates every panel in
+// place without overwriting layout changes made to the dashboards in Kibana.
+write("./tensai-panels-update.ndjson", objects.filter((o) => o.type !== "dashboard"))

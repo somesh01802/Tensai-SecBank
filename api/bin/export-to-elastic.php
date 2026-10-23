@@ -15,7 +15,11 @@
  *   ES_INSECURE=1                    skip TLS verification (self-signed certs)
  *
  *   php bin/export-to-elastic.php                     full export
- *   php bin/export-to-elastic.php --since-minutes=15  only recent transactions/logins (for cron)
+ *   php bin/export-to-elastic.php --incremental       only what changed since the last successful
+ *                                                     --incremental run (first run = full). Use this in cron:
+ *                                                     the checkpoint (var/export-state.json) means a missed
+ *                                                     or failed run never loses data.
+ *   php bin/export-to-elastic.php --since-minutes=15  changes in the last N minutes (manual catch-up)
  *   php bin/export-to-elastic.php --dry-run           count rows + show a sample doc, send nothing
  */
 require __DIR__ . '/../vendor/autoload.php';
@@ -72,7 +76,7 @@ function ensureIndex(string $index): void
         throw new RuntimeException("create index $index HTTP $code: " . json_encode($j['error'] ?? $j));
 }
 
-function export(string $index, string $sql, callable $map, bool $dry): void
+function export(string $index, string $sql, callable $map, bool $dry): int
 {
     if (!$dry) ensureIndex($index);
     $st = Db::pdo()->query($sql);
@@ -100,35 +104,59 @@ function export(string $index, string $sql, callable $map, bool $dry): void
     if (!$dry) $flush();
     printf("[export] %-20s %7d docs%s\n", $index, $n, $failed ? " ($failed FAILED)" : '');
     if ($dry && $sample) echo '  sample: ' . json_encode($sample) . "\n";
+    return $failed;
 }
 
-$o = getopt('', ['since-minutes::', 'dry-run']);
+$o = getopt('', ['since-minutes::', 'incremental', 'dry-run']);
 $dry = isset($o['dry-run']);
-$since = isset($o['since-minutes']) ? max(1, (int) $o['since-minutes']) : null;
+$incremental = isset($o['incremental']);
 if (!$dry && !envv('ES_URL')) { fwrite(STDERR, "ES_URL is not set — see the header of this script.\n"); exit(1); }
-$recent = fn(string $col) => $since ? "WHERE $col >= now() - interval '$since minutes'" : '';
+
+// Cut-off as a SQL expression (null = full export). Times come from the DB
+// clock so PHP/DB clock skew can't open a gap.
+$stateFile = __DIR__ . '/../var/export-state.json';
+$startedAt = (string) Db::pdo()->query('SELECT now()')->fetchColumn();
+$cutoff = null;
+if (isset($o['since-minutes'])) {
+    $cutoff = "now() - interval '" . max(1, (int) $o['since-minutes']) . " minutes'";
+} elseif ($incremental && is_file($stateFile)) {
+    $last = json_decode((string) file_get_contents($stateFile), true)['last_run'] ?? null;
+    // Re-format through DateTimeImmutable so only a valid timestamp reaches the SQL.
+    // 2-minute overlap catches rows committed just after the previous run read; _id makes it harmless.
+    if ($last) $cutoff = "'" . (new DateTimeImmutable($last))->format('Y-m-d H:i:s.uP') . "'::timestamptz - interval '2 minutes'";
+}
+echo '[export] mode: ' . ($cutoff ? "changes since $cutoff" : 'full') . "\n";
+$since = fn(string $col) => $cutoff ? "$col >= ($cutoff)" : 'TRUE';
 
 $balance = "COALESCE(SUM(CASE WHEN le.type = 'CREDIT' THEN le.amount ELSE -le.amount END), 0)";
+$failed = 0;
 
-// Users + accounts are always exported in full (balances and login counts change).
-export('tensai-users', "
+// Users / accounts: re-sent when anything that feeds their computed fields
+// (balance, login count, status) changed — not just when the row was created.
+$failed += export('tensai-users', "
     SELECT u.id, u.name, u.email, u.occupation, u.is_system_user, u.created_at,
            (SELECT count(*) FROM accounts a WHERE a.user_id = u.id) AS accounts_count,
            (SELECT $balance FROM ledger_entries le JOIN accounts a ON a.id = le.account_id WHERE a.user_id = u.id) AS total_balance,
            (SELECT count(*) FROM login_events l WHERE l.user_id = u.id AND l.event = 'login' AND l.outcome = 'success') AS login_count,
            (SELECT max(l.created_at) FROM login_events l WHERE l.user_id = u.id AND l.event = 'login' AND l.outcome = 'success') AS last_login_at
-    FROM users u",
+    FROM users u
+    WHERE " . ($cutoff ? $since('u.created_at') . ' OR ' . $since('u.updated_at') . "
+       OR EXISTS (SELECT 1 FROM login_events l WHERE l.user_id = u.id AND " . $since('l.created_at') . ")
+       OR EXISTS (SELECT 1 FROM ledger_entries le JOIN accounts a ON a.id = le.account_id
+                  WHERE a.user_id = u.id AND " . $since('le.created_at') . ")" : 'TRUE'),
     fn($r) => ['@timestamp' => ts($r['created_at']), 'user_id' => $r['id'], 'name' => $r['name'], 'email' => $r['email'],
         'occupation' => $r['occupation'], 'is_system_user' => (bool) $r['is_system_user'],
         'accounts_count' => (int) $r['accounts_count'], 'total_balance' => (float) $r['total_balance'],
         'login_count' => (int) $r['login_count'], 'last_login_at' => ts($r['last_login_at'])],
     $dry);
 
-export('tensai-accounts', "
+$failed += export('tensai-accounts', "
     SELECT a.id, a.user_id, u.name AS user_name, u.email AS user_email, a.account_number, a.kind, a.status,
            a.is_primary, a.currency, a.display_name, a.created_at, $balance AS balance
     FROM accounts a JOIN users u ON u.id = a.user_id
     LEFT JOIN ledger_entries le ON le.account_id = a.id
+    WHERE " . ($cutoff ? $since('a.created_at') . ' OR ' . $since('a.updated_at') . "
+       OR EXISTS (SELECT 1 FROM ledger_entries x WHERE x.account_id = a.id AND " . $since('x.created_at') . ")" : 'TRUE') . "
     GROUP BY a.id, u.name, u.email",
     fn($r) => ['@timestamp' => ts($r['created_at']), 'account_id' => $r['id'], 'user_id' => $r['user_id'],
         'user_name' => $r['user_name'], 'user_email' => $r['user_email'], 'account_number' => $r['account_number'],
@@ -136,13 +164,13 @@ export('tensai-accounts', "
         'currency' => $r['currency'], 'display_name' => $r['display_name'], 'balance' => (float) $r['balance']],
     $dry);
 
-export('tensai-transactions', "
+$failed += export('tensai-transactions', "
     SELECT t.id, t.amount, t.status, t.category, t.description, t.created_at, t.from_account_id, t.to_account_id,
            fa.currency, fu.name AS from_user, fu.email AS from_email, tu.name AS to_user, tu.email AS to_email
     FROM transactions t
     JOIN accounts fa ON fa.id = t.from_account_id JOIN users fu ON fu.id = fa.user_id
     JOIN accounts ta ON ta.id = t.to_account_id   JOIN users tu ON tu.id = ta.user_id
-    " . $recent('t.created_at'),
+    WHERE " . $since('t.created_at') . ' OR ' . $since('t.updated_at'),
     fn($r) => ['@timestamp' => ts($r['created_at']), 'transaction_id' => $r['id'], 'amount' => (float) $r['amount'],
         'status' => $r['status'], 'category' => $r['category'], 'description' => $r['description'],
         'currency' => $r['currency'], 'from_account_id' => $r['from_account_id'], 'to_account_id' => $r['to_account_id'],
@@ -150,11 +178,17 @@ export('tensai-transactions', "
         'self_transfer' => $r['from_account_id'] === $r['to_account_id']],
     $dry);
 
-export('tensai-login-events', "
-    SELECT id, user_id, username, email, event, outcome, method, ip, created_at FROM login_events "
-    . $recent('created_at'),
+$failed += export('tensai-login-events', "
+    SELECT id, user_id, username, email, event, outcome, method, ip, created_at FROM login_events
+    WHERE " . $since('created_at'),
     fn($r) => ['@timestamp' => ts($r['created_at']), 'user_id' => $r['user_id'], 'username' => $r['username'],
         'email' => $r['email'], 'event' => $r['event'], 'outcome' => $r['outcome'], 'method' => $r['method'], 'ip' => $r['ip']],
     $dry);
 
-echo $dry ? "[export] dry run — nothing sent\n" : "[export] done\n";
+if ($dry) { echo "[export] dry run — nothing sent\n"; exit(0); }
+if ($failed > 0) { fwrite(STDERR, "[export] $failed docs failed — checkpoint NOT advanced, next run retries them\n"); exit(1); }
+if ($incremental) {
+    @mkdir(dirname($stateFile), 0750, true);
+    file_put_contents($stateFile, json_encode(['last_run' => $startedAt]));
+}
+echo "[export] done\n";
