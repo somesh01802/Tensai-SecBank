@@ -41,6 +41,41 @@ final class Apm
         try { $tx->setLabel($key, $value); } catch (\Throwable $e) {}
     }
 
+    /**
+     * Privacy-safe, stable user identifier for telemetry: keyed HMAC of the
+     * user id (not reversible without the server secret). Same value in APM
+     * labels and in the exported Kibana docs, so the two can be joined.
+     */
+    public static function userRef(?string $userId): ?string
+    {
+        if (!$userId) return null;
+        $key = $_ENV['USER_REF_SALT'] ?? getenv('USER_REF_SALT') ?: ($_ENV['JWT_SECRET'] ?? getenv('JWT_SECRET') ?: 'tensai');
+        return 'u_' . substr(hash_hmac('sha256', $userId, 'user-ref|' . $key), 0, 16);
+    }
+
+    /** Trace id of the current APM transaction (correlates DB rows with traces). */
+    public static function traceId(): ?string
+    {
+        $tx = self::tx();
+        if (!$tx) return null;
+        try { return $tx->getTraceId(); } catch (\Throwable $e) { return null; }
+    }
+
+    /** Client session id from the X-Session-Id header (a random UUID the browser/generator creates per login). */
+    public static function sessionId(\Psr\Http\Message\ServerRequestInterface $req): ?string
+    {
+        $s = strtolower(trim($req->getHeaderLine('X-Session-Id')));
+        return preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/', $s) ? $s : null;
+    }
+
+    /** Correlation labels attached to every authenticated request. */
+    public static function correlate(\Psr\Http\Message\ServerRequestInterface $req, array $user): void
+    {
+        self::label('user_ref', self::userRef($user['id'] ?? null));
+        self::label('synthetic', (bool) ($user['isSynthetic'] ?? false));
+        if ($sid = self::sessionId($req)) self::label('session_id', $sid);
+    }
+
     /** Rename the current transaction (e.g. "POST /api/auth/login"). */
     public static function name(string $name): void
     {

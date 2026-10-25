@@ -25,7 +25,7 @@
 require __DIR__ . '/../vendor/autoload.php';
 if (is_file(__DIR__ . '/../.env')) \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
 
-use Tensai\Db;
+use Tensai\{Db, Apm};
 
 function envv(string $k): ?string
 {
@@ -57,6 +57,22 @@ function ts(?string $v): ?string
     return $v ? (new DateTimeImmutable($v))->format('Y-m-d\TH:i:s.vP') : null;
 }
 
+/**
+ * Fields added by the 0007 upgrade whose type dynamic mapping would get wrong
+ * (geo_point must be explicit; dates/numbers pinned). Applied to EXISTING
+ * indices with a put-mapping — additive only: new field names, no existing
+ * field is changed, so current dashboards/searches keep working.
+ */
+const ADDED_FIELDS = [
+    'geo_location' => ['type' => 'geo_point'],
+    'location_accuracy_m' => ['type' => 'double'],
+    'is_synthetic' => ['type' => 'boolean'],
+    'duration_ms' => ['type' => 'long'],
+    'http_status' => ['type' => 'long'],
+    'attempt_at' => ['type' => 'date'],
+    'feedback_at' => ['type' => 'date'],
+];
+
 const MAPPING = ['mappings' => [
     // Strings default to keyword (aggregatable in dashboards).
     'dynamic_templates' => [['strings' => ['match_mapping_type' => 'string',
@@ -65,15 +81,27 @@ const MAPPING = ['mappings' => [
         '@timestamp' => ['type' => 'date'], 'last_login_at' => ['type' => 'date'],
         'amount' => ['type' => 'double'], 'balance' => ['type' => 'double'], 'total_balance' => ['type' => 'double'],
         'description' => ['type' => 'text', 'fields' => ['keyword' => ['type' => 'keyword', 'ignore_above' => 256]]],
-    ],
+    ] + ADDED_FIELDS,
 ]];
 
 function ensureIndex(string $index): void
 {
     [$code, $j] = es('PUT', '/' . $index, json_encode(MAPPING));
     $type = $j['error']['type'] ?? '';
-    if ($code >= 300 && $type !== 'resource_already_exists_exception')
+    if ($code < 300) return; // created fresh with the full mapping
+    if ($type !== 'resource_already_exists_exception')
         throw new RuntimeException("create index $index HTTP $code: " . json_encode($j['error'] ?? $j));
+    // Existing index (the one the dashboards use): add only the new fields.
+    [$code, $j] = es('PUT', "/$index/_mapping", json_encode(['properties' => ADDED_FIELDS]));
+    if ($code >= 300)
+        throw new RuntimeException("add fields to $index HTTP $code (an existing field has a different type?): "
+            . json_encode($j['error'] ?? $j));
+}
+
+/** Coarsened coordinates for Kibana (2 dp ≈ 1.1 km): enough for a distribution map, not a home address. */
+function geo(?string $lat, ?string $lon): ?array
+{
+    return ($lat !== null && $lon !== null) ? ['lat' => round((float) $lat, 2), 'lon' => round((float) $lon, 2)] : null;
 }
 
 function export(string $index, string $sql, callable $map, bool $dry): int
@@ -134,7 +162,7 @@ $failed = 0;
 // Users / accounts: re-sent when anything that feeds their computed fields
 // (balance, login count, status) changed — not just when the row was created.
 $failed += export('tensai-users', "
-    SELECT u.id, u.name, u.email, u.occupation, u.is_system_user, u.created_at,
+    SELECT u.id, u.name, u.email, u.occupation, u.is_system_user, u.created_at, u.role, u.is_synthetic,
            (SELECT count(*) FROM accounts a WHERE a.user_id = u.id) AS accounts_count,
            (SELECT $balance FROM ledger_entries le JOIN accounts a ON a.id = le.account_id WHERE a.user_id = u.id) AS total_balance,
            (SELECT count(*) FROM login_events l WHERE l.user_id = u.id AND l.event = 'login' AND l.outcome = 'success') AS login_count,
@@ -147,42 +175,89 @@ $failed += export('tensai-users', "
     fn($r) => ['@timestamp' => ts($r['created_at']), 'user_id' => $r['id'], 'name' => $r['name'], 'email' => $r['email'],
         'occupation' => $r['occupation'], 'is_system_user' => (bool) $r['is_system_user'],
         'accounts_count' => (int) $r['accounts_count'], 'total_balance' => (float) $r['total_balance'],
-        'login_count' => (int) $r['login_count'], 'last_login_at' => ts($r['last_login_at'])],
+        'login_count' => (int) $r['login_count'], 'last_login_at' => ts($r['last_login_at']),
+        // 0007 additive fields
+        'role' => $r['role'], 'is_synthetic' => (bool) $r['is_synthetic'], 'user_ref' => Apm::userRef($r['id'])],
     $dry);
 
 $failed += export('tensai-accounts', "
     SELECT a.id, a.user_id, u.name AS user_name, u.email AS user_email, a.account_number, a.kind, a.status,
-           a.is_primary, a.currency, a.display_name, a.created_at, $balance AS balance
+           a.is_primary, a.currency, a.display_name, a.created_at, $balance AS balance, u.is_synthetic
     FROM accounts a JOIN users u ON u.id = a.user_id
     LEFT JOIN ledger_entries le ON le.account_id = a.id
     WHERE " . ($cutoff ? $since('a.created_at') . ' OR ' . $since('a.updated_at') . "
        OR EXISTS (SELECT 1 FROM ledger_entries x WHERE x.account_id = a.id AND " . $since('x.created_at') . ")" : 'TRUE') . "
-    GROUP BY a.id, u.name, u.email",
+    GROUP BY a.id, u.name, u.email, u.is_synthetic",
     fn($r) => ['@timestamp' => ts($r['created_at']), 'account_id' => $r['id'], 'user_id' => $r['user_id'],
         'user_name' => $r['user_name'], 'user_email' => $r['user_email'], 'account_number' => $r['account_number'],
         'kind' => $r['kind'], 'status' => $r['status'], 'is_primary' => (bool) $r['is_primary'],
-        'currency' => $r['currency'], 'display_name' => $r['display_name'], 'balance' => (float) $r['balance']],
+        'currency' => $r['currency'], 'display_name' => $r['display_name'], 'balance' => (float) $r['balance'],
+        'is_synthetic' => (bool) $r['is_synthetic']],
     $dry);
 
+// One doc per completed ledger transaction (_id = transaction id, as before) enriched
+// with its attempt + feedback, PLUS one doc per FAILED attempt (_id = attempt id,
+// status FAILED, record_type failed_attempt) — failures never created a ledger row.
+// Panels that mean "ledger transactions" filter: not record_type : "failed_attempt".
 $failed += export('tensai-transactions', "
-    SELECT t.id, t.amount, t.status, t.category, t.description, t.created_at, t.from_account_id, t.to_account_id,
-           fa.currency, fu.name AS from_user, fu.email AS from_email, tu.name AS to_user, tu.email AS to_email
-    FROM transactions t
-    JOIN accounts fa ON fa.id = t.from_account_id JOIN users fu ON fu.id = fa.user_id
-    JOIN accounts ta ON ta.id = t.to_account_id   JOIN users tu ON tu.id = ta.user_id
-    WHERE " . $since('t.created_at') . ' OR ' . $since('t.updated_at'),
-    fn($r) => ['@timestamp' => ts($r['created_at']), 'transaction_id' => $r['id'], 'amount' => (float) $r['amount'],
+    SELECT * FROM (
+        SELECT t.id::text AS id, 'transaction' AS record_type, t.id AS transaction_id, t.amount, t.status::text AS status,
+               t.category, t.description, t.created_at, t.updated_at, t.from_account_id, t.to_account_id, fa.currency,
+               fu.id AS user_id, fu.name AS from_user, fu.email AS from_email, tu.name AS to_user, tu.email AS to_email,
+               fu.is_synthetic, a.id AS attempt_id, a.kind, a.outcome, a.error_category, a.error_message, a.duration_ms,
+               a.http_status, a.trace_id, a.session_id, a.target, a.fault_injected, a.created_at AS attempt_at,
+               f.status AS feedback_status, f.rating AS feedback_rating, f.created_at AS feedback_at
+        FROM transactions t
+        JOIN accounts fa ON fa.id = t.from_account_id JOIN users fu ON fu.id = fa.user_id
+        JOIN accounts ta ON ta.id = t.to_account_id   JOIN users tu ON tu.id = ta.user_id
+        LEFT JOIN (SELECT DISTINCT ON (transaction_id) * FROM transaction_attempts
+                   -- the ORIGINAL attempt that created the transaction (idempotent retries link to it too)
+                   WHERE transaction_id IS NOT NULL ORDER BY transaction_id, created_at ASC) a ON a.transaction_id = t.id
+        LEFT JOIN transaction_feedback f ON f.attempt_id = a.id
+        UNION ALL
+        SELECT a.id::text, 'failed_attempt', NULL::uuid, a.amount, 'FAILED', a.category, a.error_message, a.created_at, a.created_at,
+               a.source_account_id, NULL::uuid, a.currency, u.id, u.name, u.email, NULL, NULL, u.is_synthetic,
+               a.id, a.kind, a.outcome, a.error_category, a.error_message, a.duration_ms, a.http_status, a.trace_id, a.session_id,
+               a.target, a.fault_injected, a.created_at, f.status, f.rating, f.created_at
+        FROM transaction_attempts a JOIN users u ON u.id = a.user_id
+        LEFT JOIN transaction_feedback f ON f.attempt_id = a.id
+        WHERE a.transaction_id IS NULL AND a.outcome = 'FAILURE'
+    ) x
+    WHERE " . $since('x.created_at') . ' OR ' . $since('x.updated_at') . ' OR ' . $since('x.attempt_at') . ' OR ' . $since('x.feedback_at'),
+    fn($r) => ['@timestamp' => ts($r['created_at']), 'transaction_id' => $r['transaction_id'],
+        'amount' => $r['amount'] !== null ? (float) $r['amount'] : null,
         'status' => $r['status'], 'category' => $r['category'], 'description' => $r['description'],
         'currency' => $r['currency'], 'from_account_id' => $r['from_account_id'], 'to_account_id' => $r['to_account_id'],
         'from_user' => $r['from_user'], 'from_email' => $r['from_email'], 'to_user' => $r['to_user'], 'to_email' => $r['to_email'],
-        'self_transfer' => $r['from_account_id'] === $r['to_account_id']],
+        'self_transfer' => $r['to_account_id'] !== null && $r['from_account_id'] === $r['to_account_id'],
+        // 0007 additive fields
+        'record_type' => $r['record_type'], 'attempt_id' => $r['attempt_id'], 'kind' => $r['kind'],
+        'outcome' => $r['outcome'] ? strtolower($r['outcome']) : ($r['status'] === 'COMPLETED' ? 'success' : strtolower($r['status'])),
+        'error_category' => $r['error_category'], 'failure_reason' => $r['outcome'] === 'FAILURE' ? $r['error_message'] : null,
+        'duration_ms' => $r['duration_ms'] !== null ? (int) $r['duration_ms'] : null,
+        'http_status' => $r['http_status'] !== null ? (int) $r['http_status'] : null,
+        'trace_id' => $r['trace_id'], 'session_id' => $r['session_id'], 'target' => $r['target'],
+        'fault_injected' => $r['fault_injected'] === null ? null : (bool) $r['fault_injected'],
+        'attempt_at' => ts($r['attempt_at']), 'is_synthetic' => (bool) $r['is_synthetic'], 'user_ref' => Apm::userRef($r['user_id']),
+        'feedback_status' => $r['feedback_status'] ? strtolower($r['feedback_status']) : null,
+        'feedback_rating' => $r['feedback_rating'], 'feedback_at' => ts($r['feedback_at'])],
     $dry);
 
+// Login events enriched with the consent-based location outcome (no row → "unknown").
 $failed += export('tensai-login-events', "
-    SELECT id, user_id, username, email, event, outcome, method, ip, created_at FROM login_events
-    WHERE " . $since('created_at'),
+    SELECT l.id, l.user_id, l.username, l.email, l.event, l.outcome, l.method, l.ip, l.created_at, l.session_id,
+           u.is_synthetic, ll.status AS location_status, ll.latitude, ll.longitude, ll.accuracy_m
+    FROM login_events l
+    LEFT JOIN users u ON u.id = l.user_id
+    LEFT JOIN login_locations ll ON ll.login_event_id = l.id
+    WHERE " . $since('l.created_at') . ' OR ' . $since('ll.created_at'),
     fn($r) => ['@timestamp' => ts($r['created_at']), 'user_id' => $r['user_id'], 'username' => $r['username'],
-        'email' => $r['email'], 'event' => $r['event'], 'outcome' => $r['outcome'], 'method' => $r['method'], 'ip' => $r['ip']],
+        'email' => $r['email'], 'event' => $r['event'], 'outcome' => $r['outcome'], 'method' => $r['method'], 'ip' => $r['ip'],
+        // 0007 additive fields
+        'session_id' => $r['session_id'], 'user_ref' => Apm::userRef($r['user_id']), 'is_synthetic' => (bool) $r['is_synthetic'],
+        'location_status' => $r['location_status'] ?? 'unknown',
+        'geo_location' => geo($r['latitude'], $r['longitude']),
+        'location_accuracy_m' => $r['accuracy_m'] !== null ? (float) $r['accuracy_m'] : null],
     $dry);
 
 if ($dry) { echo "[export] dry run — nothing sent\n"; exit(0); }

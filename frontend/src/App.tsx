@@ -4,7 +4,10 @@ import { Navigate, Route, Routes } from "react-router-dom"
 import { useThemeStore } from "@/stores/themeStore"
 import { useAuthStore } from "@/stores/authStore"
 import { AppLayout } from "@/components/layout/AppLayout"
-import { ProtectedRoute } from "@/components/ProtectedRoute"
+import { AdminRoute, ProtectedRoute } from "@/components/ProtectedRoute"
+import { LocationConsent } from "@/components/LocationConsent"
+import { FeedbackPrompt } from "@/components/FeedbackPrompt"
+import { AdminPage } from "@/pages/AdminPage"
 
 import { LandingPage } from "@/pages/LandingPage"
 import { LoginPage } from "@/pages/LoginPage"
@@ -29,22 +32,32 @@ export default function App() {
   const theme = useThemeStore((s) => s.theme)
   const setTheme = useThemeStore((s) => s.set)
   const isAuthed = useAuthStore((s) => Boolean(s.token))
+  const home = useAuthStore((s) => (s.user?.role === "ADMIN" ? "/admin" : "/app"))
 
   useEffect(() => {
     setTheme(theme)
   }, [theme, setTheme])
 
   return (
+    <>
     <Routes>
       <Route path="/" element={<LandingPage />} />
 
       <Route
         path="/login"
-        element={isAuthed ? <Navigate to="/app" replace /> : <LoginPage />}
+        element={isAuthed ? <Navigate to={home} replace /> : <LoginPage />}
       />
       <Route
         path="/register"
-        element={isAuthed ? <Navigate to="/app" replace /> : <RegisterPage />}
+        element={isAuthed ? <Navigate to={home} replace /> : <RegisterPage />}
+      />
+      <Route
+        path="/admin"
+        element={
+          <AdminRoute>
+            <AdminPage />
+          </AdminRoute>
+        }
       />
       <Route
         path="/mpin-setup"
@@ -90,5 +103,9 @@ export default function App() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    {/* Self-hiding overlays: location consent after sign-in, feedback after each transaction attempt. */}
+    <LocationConsent />
+    <FeedbackPrompt />
+    </>
   )
 }

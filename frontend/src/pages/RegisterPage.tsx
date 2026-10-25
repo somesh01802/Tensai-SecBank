@@ -16,11 +16,14 @@ export function RegisterPage() {
   const [password, setPassword] = useState("")
   const [showPass, setShowPass] = useState(false)
   const setAuth = useAuthStore((s) => s.setAuth)
+  const startSession = useAuthStore((s) => s.startSession)
+  const setLoginMeta = useAuthStore((s) => s.setLoginMeta)
   const navigate = useNavigate()
 
   const mutation = useMutation({
-    mutationFn: authApi.register,
+    mutationFn: (payload: Parameters<typeof authApi.register>[0]) => { startSession(); return authApi.register(payload) },
     onSuccess: (data: any) => {
+      setLoginMeta({ loginEventId: data.loginEventId, userRef: data.userRef })
       setAuth(data.user, data.token, Boolean(data.hasMpin))
       toast.success(`Welcome, ${data.user.name.split(" ")[0]}`)
       navigate("/mpin-setup", { replace: true })

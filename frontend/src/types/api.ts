@@ -1,10 +1,16 @@
+export type UserRole = "CUSTOMER" | "ADMIN"
+
 export interface User {
   id: string
   _id?: string
   email: string
   name: string
   mobileNumber?: string | null
+  role?: UserRole
 }
+
+export type LocationStatus = "granted" | "denied" | "dismissed" | "unavailable" | "timeout" | "error"
+export type FeedbackRating = "HAPPY" | "SATISFIED" | "NOT_SATISFIED"
 
 export interface AuthShape {
   user: User
@@ -197,6 +203,10 @@ export interface Beneficiary {
 export interface AuthResponse {
   user: User
   token: string
+  /** login_events id — the browser attaches the location-consent outcome to it */
+  loginEventId?: number | null
+  /** privacy-safe user identifier used in telemetry */
+  userRef?: string | null
 }
 
 export type InvestmentType =

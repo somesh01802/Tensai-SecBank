@@ -10,10 +10,12 @@ use Slim\Psr7\Response as SlimResponse;
  * Auth middleware. Reads the JWT from the Authorization: Bearer header or the
  * `token` cookie, rejects revoked tokens, loads the user, and attaches it to
  * the request as the `user` attribute. Mirrors the Node auth.middleware.
+ * `$requireRole` enforces a role (e.g. 'ADMIN') from the database row — never
+ * from the token or the client — and audits every denied attempt.
  */
 class Auth
 {
-    public function __construct(private bool $requireSystem = false) {}
+    public function __construct(private bool $requireSystem = false, private ?string $requireRole = null) {}
 
     public function __invoke(Request $req, Handler $handler): Response
     {
@@ -28,7 +30,7 @@ class Auth
         if (!$userId) return self::unauth('Unauthorized: token is invalid');
 
         $user = Db::one(
-            'SELECT id, email, name, mobile_number, is_system_user FROM users WHERE id = :id',
+            'SELECT id, email, name, mobile_number, is_system_user, role, is_synthetic FROM users WHERE id = :id',
             [':id' => $userId]
         );
         if (!$user) return self::unauth('Unauthorized: user not found');
@@ -37,9 +39,16 @@ class Auth
             $res = new SlimResponse();
             return Http::json($res, ['message' => 'Forbidden: system user required'], 403);
         }
+        if ($this->requireRole && ($user['role'] ?? null) !== $this->requireRole) {
+            Audit::log($req, $user['id'], 'admin.access_denied', 'route', null,
+                ['path' => $req->getUri()->getPath(), 'method' => $req->getMethod(), 'role' => $user['role'] ?? null]);
+            Apm::label('failure_reason', 'role required: ' . $this->requireRole);
+            return Http::json(new SlimResponse(), ['message' => 'Forbidden: admin access required'], 403);
+        }
 
         // Attribute this request's APM transaction to the user (user.* in Kibana).
         Apm::setUser($user['id'], $user['name'], $user['email'] ?? null);
+        Apm::correlate($req, $user);
 
         $req = $req->withAttribute('user', $user)->withAttribute('token', $token);
         return $handler->handle($req);

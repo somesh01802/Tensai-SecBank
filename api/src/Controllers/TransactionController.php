@@ -3,7 +3,7 @@ namespace Tensai\Controllers;
 
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Message\ResponseInterface as Response;
-use Tensai\{Db, Http, ApiError};
+use Tensai\{Db, Http, ApiError, Attempts};
 use PDO;
 
 class TransactionController
@@ -27,16 +27,25 @@ class TransactionController
         $from = $b['fromAccount'] ?? null; $to = $b['toAccount'] ?? null;
         $amount = $b['amount'] ?? null; $key = $b['idempotencyKey'] ?? null; $desc = $b['description'] ?? null;
 
+        $meta = ['amount' => $amount, 'sourceAccountId' => $from, 'idempotencyKey' => $key,
+                 'target' => $to ? 'account ' . Attempts::mask((string) $to) : null];
+        return Attempts::run($req, $res, $u, 'P2P', $meta, fn() => $this->transfer($u, $from, $to, $amount, $key, $desc));
+    }
+
+    /** @return array{0: array, 1: int, 2: ?string} [payload, HTTP status, transaction id] */
+    private function transfer(array $u, $from, $to, $amount, $key, $desc): array
+    {
         if (!$from || !$to || !$amount || !$key)
             throw new ApiError('fromAccount, toAccount, amount and idempotencyKey are required', 400);
         $amt = (float) $amount;
         if (!is_finite($amt) || $amt <= 0) throw new ApiError('amount must be a positive number', 400);
         if ($from === $to) throw new ApiError('Cannot transfer to the same account', 400);
+        if (!Attempts::isUuid($from) || !Attempts::isUuid($to)) throw new ApiError('Invalid fromAccount or toAccount', 404);
 
         $existing = Db::one('SELECT * FROM transactions WHERE idempotency_key = :k', [':k' => $key]);
         if ($existing) {
-            if ($existing['status'] === 'COMPLETED') return Http::json($res, ['message' => 'Transaction already processed', 'transaction' => self::shape($existing)]);
-            if ($existing['status'] === 'PENDING') return Http::json($res, ['message' => 'Transaction is still processing', 'transaction' => self::shape($existing)]);
+            if ($existing['status'] === 'COMPLETED') return [['message' => 'Transaction already processed', 'transaction' => self::shape($existing)], 200, $existing['id']];
+            if ($existing['status'] === 'PENDING') return [['message' => 'Transaction is still processing', 'transaction' => self::shape($existing)], 200, $existing['id']];
             throw new ApiError("Transaction previously {$existing['status']}, retry with a new idempotency key", 409, ['transaction' => self::shape($existing)]);
         }
 
@@ -45,6 +54,12 @@ class TransactionController
         if (!$fromAcc || !$toAcc) throw new ApiError('Invalid fromAccount or toAccount', 404);
         if ($fromAcc['userId'] !== $u['id']) throw new ApiError('You do not own the source account', 403);
         if ($fromAcc['status'] !== 'ACTIVE' || $toAcc['status'] !== 'ACTIVE') throw new ApiError('Both accounts must be ACTIVE', 400);
+
+        // Synthetic (test) money never mixes with live customer money, in either direction.
+        $owners = Db::one('SELECT (SELECT is_synthetic FROM users WHERE id = :f) AS f, (SELECT is_synthetic FROM users WHERE id = :t) AS t',
+            [':f' => $fromAcc['userId'], ':t' => $toAcc['userId']]);
+        if ((bool) $owners['f'] !== (bool) $owners['t'])
+            throw new ApiError('Transfers between test and live accounts are not allowed', 400);
 
         try {
             $completed = Db::tx(function (PDO $pdo) use ($from, $to, $amt, $key, $desc) {
@@ -72,7 +87,7 @@ class TransactionController
             throw $e;
         }
 
-        return Http::json($res, ['message' => 'Transaction completed successfully', 'transaction' => self::shape($completed)], 201);
+        return [['message' => 'Transaction completed successfully', 'transaction' => self::shape($completed)], 201, $completed['id']];
     }
 
     /** GET /api/transactions?from=&to=&limit= */

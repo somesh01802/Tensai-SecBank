@@ -11,7 +11,10 @@ import { useAuthStore, setApmUser } from "@/stores/authStore"
 
 // Re-attach RUM user context after a page reload (store is rehydrated from
 // localStorage, which doesn't re-run setAuth).
-setApmUser(useAuthStore.getState().user)
+{
+  const s = useAuthStore.getState()
+  setApmUser(s.user, s.userRef, s.sessionId)
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {

@@ -56,7 +56,8 @@ function app(): \Slim\App
             ->withHeader('Access-Control-Allow-Credentials', 'true')
             // traceparent/tracestate/elastic-apm-traceparent let the browser RUM
             // agent correlate its transaction with the PHP backend (distributed tracing).
-            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, traceparent, tracestate, elastic-apm-traceparent')
+            // X-Session-Id: login-session correlation. X-Tensai-Fault: synthetic-only fault injection (ignored for real users).
+            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, traceparent, tracestate, elastic-apm-traceparent, X-Session-Id, X-Tensai-Fault')
             ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS')
             ->withHeader('Access-Control-Max-Age', '600')
             ->withAddedHeader('Vary', 'Origin');

@@ -3,8 +3,7 @@ namespace Tensai\Controllers;
 
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Message\ResponseInterface as Response;
-use Tensai\{Db, Http, ApiError};
-use PDO;
+use Tensai\{Db, Http, ApiError, Attempts, Ledger};
 
 class BillController
 {
@@ -34,26 +33,39 @@ class BillController
     {
         $u = $req->getAttribute('user');
         $from = ((array) $req->getParsedBody())['fromAccountId'] ?? null;
-        $bill = Db::one('SELECT * FROM bills WHERE id = :i AND user_id = :u', [':i' => $args['id'], ':u' => $u['id']]);
-        if (!$bill) throw new ApiError('Bill not found', 404);
-        if ($bill['status'] === 'PAID') return Http::json($res, ['message' => 'Bill already paid', 'bill' => $bill]);
+        return Attempts::run($req, $res, $u, 'BILL', ['sourceAccountId' => $from],
+            function (array &$meta) use ($u, $from, $args) {
+                $bill = Attempts::isUuid($args['id'] ?? null)
+                    ? Db::one('SELECT * FROM bills WHERE id = :i AND user_id = :u', [':i' => $args['id'], ':u' => $u['id']])
+                    : null;
+                if (!$bill) throw new ApiError('Bill not found', 404);
+                $meta += ['amount' => $bill['amount'], 'category' => $bill['category'], 'target' => $bill['billerName']];
+                if ($bill['status'] === 'PAID') return [['message' => 'Bill already paid', 'bill' => $bill], 200, $bill['paidTxId'] ?? null];
 
-        $paidTxId = null;
-        if ($from) {
-            $paidTxId = Db::tx(function (PDO $pdo) use ($from, $bill) {
-                $key = 'bill-' . $bill['id'] . '-' . (int) (microtime(true) * 1000);
-                $st = $pdo->prepare("INSERT INTO transactions (from_account_id,to_account_id,amount,status,idempotency_key,description,category)
-                    VALUES (?,?,?,'COMPLETED',?,?,?) RETURNING id");
-                $st->execute([$from, $from, $bill['amount'], $key, 'Bill payment · ' . $bill['billerName'], $bill['category']]);
-                $tx = $st->fetch();
-                $pdo->prepare("INSERT INTO ledger_entries (account_id,transaction_id,type,amount) VALUES (?,?,'DEBIT',?)")
-                    ->execute([$from, $tx['id'], $bill['amount']]);
-                return $tx['id'];
+                $paidTxId = null;
+                if ($from) {
+                    // The source account must belong to the caller (previously unchecked).
+                    $acc = Attempts::isUuid($from)
+                        ? Db::one('SELECT id, status FROM accounts WHERE id = :a AND user_id = :u', [':a' => $from, ':u' => $u['id']])
+                        : null;
+                    if (!$acc) throw new ApiError('Source account not found', 404);
+                    if ($acc['status'] !== 'ACTIVE') throw new ApiError('Source account is not active', 400);
+                    // Ledger::debit = same COMPLETED tx + DEBIT entry as before, plus the
+                    // non-negative balance check; a per-bill key stops double payment.
+                    try {
+                        $tx = Ledger::debit($from, $bill['amount'], 'bill-pay-' . $bill['id'],
+                            'Bill payment · ' . $bill['billerName'], $bill['category']);
+                    } catch (ApiError $e) {
+                        if ($e->getMessage() === 'INSUFFICIENT_BALANCE')
+                            throw new ApiError('Insufficient balance', 400, ['available' => $e->extra['available'] ?? null]);
+                        throw $e;
+                    }
+                    $paidTxId = $tx['id'];
+                }
+                $row = Db::one('UPDATE bills SET status=\'PAID\', paid_at=now(), paid_tx_id=:t WHERE id=:i RETURNING *',
+                    [':t' => $paidTxId, ':i' => $bill['id']]);
+                return [['message' => 'Bill paid', 'bill' => $row], 200, $paidTxId];
             });
-        }
-        $row = Db::one('UPDATE bills SET status=\'PAID\', paid_at=now(), paid_tx_id=:t WHERE id=:i RETURNING *',
-            [':t' => $paidTxId, ':i' => $bill['id']]);
-        return Http::json($res, ['message' => 'Bill paid', 'bill' => $row]);
     }
 
     public function delete(Request $req, Response $res, array $args): Response

@@ -3,7 +3,7 @@ namespace Tensai\Controllers;
 
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Message\ResponseInterface as Response;
-use Tensai\{Db, Http, ApiError, Banks, Rewards, Ledger};
+use Tensai\{Db, Http, ApiError, Banks, Rewards, Ledger, Attempts};
 
 class TransferController
 {
@@ -27,11 +27,21 @@ class TransferController
         $holder = $b['accountHolderName'] ?? null; $amount = $b['amount'] ?? null; $remarks = $b['remarks'] ?? null;
         $src = $b['sourceAccountId'] ?? null; $key = $b['idempotencyKey'] ?? null; $savePayee = !empty($b['savePayee']);
 
+        $meta = ['amount' => $amount, 'category' => 'TRANSFER_EXTERNAL', 'sourceAccountId' => $src, 'idempotencyKey' => $key,
+                 'target' => trim(($bank ?? '') . ' ' . Attempts::mask(is_string($acc) ? $acc : null))];
+        return Attempts::run($req, $res, $u, 'EXTERNAL', $meta,
+            fn() => $this->quickTransfer($u, $bank, $acc, $conf, $holder, $amount, $remarks, $src, $key, $savePayee));
+    }
+
+    /** @return array{0: array, 1: int, 2: ?string} [payload, HTTP status, transaction id] */
+    private function quickTransfer(array $u, $bank, $acc, $conf, $holder, $amount, $remarks, $src, $key, bool $savePayee): array
+    {
         if (!$bank || !$acc || !$conf || !$holder || !$amount || !$src || !$key) throw new ApiError('Missing required fields', 400);
         if (!in_array($bank, Banks::LIST, true)) throw new ApiError('Unknown bank', 400);
         if ($acc !== $conf) throw new ApiError('Account numbers do not match', 400);
         $amt = (float) $amount;
         if (!is_finite($amt) || $amt <= 0) throw new ApiError('Invalid amount', 400);
+        if (!Attempts::isUuid($src)) throw new ApiError('Source account not found', 404);
 
         $srcAcc = Db::one('SELECT * FROM accounts WHERE id = :i AND user_id = :u LIMIT 1', [':i' => $src, ':u' => $u['id']]);
         if (!$srcAcc) throw new ApiError('Source account not found', 404);
@@ -57,7 +67,7 @@ class TransferController
         if ($amt >= 5000) Rewards::award($u['id'], 'transfer.amount.gte.5000');
         if ($remarks) Rewards::award($u['id'], 'transfer.remarks');
 
-        return Http::json($res, ['message' => 'Transfer complete', 'transaction' => self::shapeTx($tx)], 201);
+        return [['message' => 'Transfer complete', 'transaction' => self::shapeTx($tx)], 201, $tx['id']];
     }
 
     public function createScheduled(Request $req, Response $res): Response

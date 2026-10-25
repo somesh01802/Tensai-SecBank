@@ -72,3 +72,79 @@ systemctl status tensai-node > /var/backups/tensai-node-state.txt 2>&1 || true
   listens on 5432 via docker-proxy). The server `.env` uses **5433**.
 - Azure NSG blocks inbound 80/443 (22 open). Confirm the reverse-proxy/exposure
   plan with the infra owner before relying on public HTTP.
+
+---
+
+# Upgrade 0007 — roles, transaction attempts, feedback, login locations, synthetic journeys
+
+Additive release on top of the PHP backend. Server paths below match the live
+host (`/var/www/tensai-secbank`, php8.1-fpm, Apache, native Postgres :5433 db `tensai`).
+
+## What it adds
+- `migrations/0007_*.sql` — `users.role` (CUSTOMER|ADMIN), `users.is_synthetic`,
+  `login_events.session_id`, new tables `login_locations`, `transaction_attempts`,
+  `transaction_feedback` (FKs, CHECK constraints, indexes). Backfills
+  `is_synthetic` for `@tensai.test` / `@loadtest.tensai.test` users. No existing
+  column or row is altered otherwise. Rollback SQL: `migrations/rollback/`.
+- API: Customer/Admin sign-in (`loginAs`), `/api/admin/*` (role-enforced, audited),
+  `POST /api/auth/location`, `POST /api/feedback`; every transfer / bill payment
+  attempt recorded with outcome + failure category; bill payment now checks account
+  ownership and balance (both previously missing).
+- Frontend: Customer/Admin login, location-consent prompt, post-transaction
+  feedback prompt, `/admin` console.
+- Telemetry: same indices (`tensai-*`, `traces-apm*`) — see `kibana/README.md`.
+
+## Required environment (api/.env)
+| Variable | Value | Notes |
+|---|---|---|
+| `FAULT_INJECTION_ENABLED` | `true` only if you run the synthetic generator | affects synthetic users only |
+| `TRANSFER_LIMIT_PER_TXN` | `500000` (default) | per P2P / external transfer |
+| `SYNTHETIC_EMAIL_DOMAINS` | `tensai.test` (default) | covers `loadtest.tensai.test` |
+| `USER_REF_SALT` | optional | default derives from `JWT_SECRET` |
+Existing `DATABASE_URL`, `JWT_SECRET`, `ES_URL`, `ES_API_KEY` are unchanged.
+
+## Deploy
+```bash
+cd /var/www/tensai-secbank
+sudo php api/bin/traffic.php --stop                                   # pause synthetic traffic
+sudo -u postgres pg_dump -p 5433 -Fc tensai -f /var/backups/tensai/pre-0007-$(date +%F-%H%M).dump
+sudo git checkout -- frontend/tsconfig.node.tsbuildinfo frontend/vite.config.js   # build artefacts touched by the last build
+sudo git pull origin main
+sudo php api/bin/migrate.php                                          # expect: applied 0007_...
+echo 'FAULT_INJECTION_ENABLED=true' | sudo tee -a api/.env            # only if running the generator
+sudo env "PATH=$PATH" npm --workspace frontend run build
+sudo systemctl restart php8.1-fpm && sudo apachectl configtest && sudo systemctl reload apache2
+sudo ADMIN_PASSWORD='<12+ char secret>' php api/bin/create-admin.php --email=<staff email> --name="<Full Name>"
+cd api && sudo flock /tmp/tensai-export.lock php bin/export-to-elastic.php   # one FULL export: backfills new fields
+sudo cp ../deploy/tensai-traffic@.service /etc/systemd/system/ && sudo systemctl daemon-reload
+sudo php bin/traffic.php --resume && sudo systemctl restart tensai-traffic@1 tensai-traffic@2 tensai-traffic@3
+```
+Kibana: import `kibana/tensai-panels-update.ndjson` (overwrite) — updates panels in
+place and adds the Journeys dashboard without touching customised dashboards.
+
+## Verify
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/api/admin/summary          # 401
+sudo -u postgres psql -p 5433 tensai -c "SELECT is_synthetic, role, count(*) FROM users GROUP BY 1,2"
+sudo -u postgres psql -p 5433 tensai -c "SELECT outcome, error_category, count(*) FROM transaction_attempts
+  WHERE created_at > now() - interval '15 minutes' GROUP BY 1,2 ORDER BY 3 DESC"
+journalctl -u tensai-traffic@1 -n 5 --no-pager                                       # dup_violations=0
+tail -n 8 /var/log/tensai-export.log                                                  # docs > 0, no FAILED
+```
+Kibana Discover: `record_type : "failed_attempt"` (tensai-transactions),
+`location_status : *` (tensai-login-events), `labels.session_id : *` (traces-apm*).
+Full automated suite (creates test users — staging/local only):
+`php api/tests/integration.php --base=http://127.0.0.1 --allow-writes`.
+
+## Rollback
+```bash
+cd /var/www/tensai-secbank
+sudo php api/bin/traffic.php --stop
+sudo git checkout --detach 804f926      # previous release (undo: sudo git checkout main); 0007 schema is additive, old code ignores it
+sudo env "PATH=$PATH" npm --workspace frontend run build && sudo systemctl restart php8.1-fpm
+# Only if the schema itself must go (destroys 0007 data only; take a dump first):
+sudo -u postgres psql -p 5433 tensai -v ON_ERROR_STOP=1 -f api/migrations/rollback/0007_roles_attempts_feedback_locations.down.sql
+```
+Kibana: `git show 804f926:kibana/tensai-panels-update.ndjson > /tmp/panels-prev.ndjson`,
+import with overwrite, delete the Journeys dashboard; optionally remove failed-attempt
+docs: `POST tensai-transactions/_delete_by_query {"query":{"term":{"record_type":"failed_attempt"}}}`.

@@ -1,9 +1,13 @@
-# Continuous synthetic traffic for the Kibana dashboards (api/bin/traffic.php).
-# One instance per worker; each worker has its own pool of load-test users.
+# Continuous SYNTHETIC user journeys for the Kibana dashboards (api/bin/traffic.php).
+# One instance per worker; each worker has its own pool of synthetic test users.
 #   sudo cp deploy/tensai-traffic@.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now tensai-traffic@1 tensai-traffic@2 tensai-traffic@3
-# Stop: sudo systemctl disable --now 'tensai-traffic@*'
+# Immediate stop (all workers, survives restarts):  sudo php /var/www/tensai-secbank/api/bin/traffic.php --stop
+#   …and to start again:                            sudo php /var/www/tensai-secbank/api/bin/traffic.php --resume
+#                                                   sudo systemctl restart 'tensai-traffic@*'
+# Remove entirely: sudo systemctl disable --now 'tensai-traffic@*'
+# Tune: sudo systemctl edit tensai-traffic@.service  (override ExecStart flags below)
 [Unit]
 Description=Tensai SecBank synthetic traffic (worker %i)
 After=network-online.target apache2.service php8.1-fpm.service postgresql.service
@@ -11,10 +15,12 @@ After=network-online.target apache2.service php8.1-fpm.service postgresql.servic
 [Service]
 Type=simple
 WorkingDirectory=/var/www/tensai-secbank/api
-# ~1 request/second per worker. Each run lasts 60 min, then systemd restarts it.
-ExecStart=/usr/bin/php bin/traffic.php --worker=%i --users=25 --minutes=60 --think-ms=800
+# ≤1 request/second per worker; 15% of money movements fail across all categories.
+ExecStart=/usr/bin/php bin/traffic.php --worker=%i --users=25 --minutes=60 --rps=1 --think-ms=300 --fail-rate=0.15
 Restart=always
 RestartSec=5
+# Exit code 75 = stop switch engaged (--stop): do not restart.
+RestartPreventExitStatus=75
 User=www-data
 Nice=10
 

@@ -27,12 +27,20 @@ const outcomeFlag = (field, value) =>
 
 const DV = {
   txn: { id: "tensai-dv-transactions", title: "tensai-transactions", name: "Tensai · Transactions",
-    runtime: { txn_success: { type: "long", script: { source: outcomeFlag("status", "COMPLETED") } } } },
+    runtime: {
+      txn_success: { type: "long", script: { source: outcomeFlag("status", "COMPLETED") } },
+      // 0007: satisfaction shares (only docs with a rating count; averages = share)
+      fb_happy: { type: "long", script: { source: outcomeFlag("feedback_rating", "HAPPY") } },
+      fb_not_satisfied: { type: "long", script: { source: outcomeFlag("feedback_rating", "NOT_SATISFIED") } },
+    } },
   // users / accounts are current-state snapshots, not events: no time field, so the
   // time picker never hides them (all 5000+ customers always visible).
   users: { id: "tensai-dv-users", title: "tensai-users", name: "Tensai · Users", timeField: null },
   logins: { id: "tensai-dv-login-events", title: "tensai-login-events", name: "Tensai · Login events",
-    runtime: { login_failed: { type: "long", script: { source: outcomeFlag("outcome", "failure") } } } },
+    runtime: {
+      login_failed: { type: "long", script: { source: outcomeFlag("outcome", "failure") } },
+      loc_granted: { type: "long", script: { source: outcomeFlag("location_status", "granted") } }, // 0007
+    } },
   accounts: { id: "tensai-dv-accounts", title: "tensai-accounts", name: "Tensai · Accounts", timeField: null },
   apm: { id: "tensai-dv-apm-traces", title: "traces-apm*", name: "Tensai · APM traces",
     runtime: {
@@ -62,8 +70,8 @@ const lastSeen = (label) => ({
   label, customLabel: true, dataType: "date", operationType: "last_value", isBucketed: false, scale: "ratio",
   sourceField: "@timestamp", params: { sortField: "@timestamp", showArrayValues: false },
 })
-const terms = (field, label, size, orderBy, other = false) => ({
-  label, customLabel: true, dataType: "string", operationType: "terms", sourceField: field, isBucketed: true, scale: "ordinal",
+const terms = (field, label, size, orderBy, other = false, dataType = "string") => ({
+  label, customLabel: true, dataType, operationType: "terms", sourceField: field, isBucketed: true, scale: "ordinal",
   params: { size, orderBy: { type: "column", columnId: orderBy }, orderDirection: "desc", otherBucket: other, missingBucket: false,
     parentFormat: { id: "terms" }, include: [], exclude: [], includeIsRegex: false, excludeIsRegex: false },
 })
@@ -113,8 +121,8 @@ const topBar = (id, title, dv, field, groupLabel, valueCol, { size = 10, query =
   lens(id, title, dv, "lnsXY", { g: terms(field, groupLabel, size, "v"), v: valueCol }, ["g", "v"],
     xyVis("bar_horizontal", "g", ["v"], { v: color }, "right"), query)
 
-const donut = (id, title, dv, field, groupLabel, valueCol, { size = 8, query = "" } = {}) =>
-  lens(id, title, dv, "lnsPie", { g: terms(field, groupLabel, size, "v", true), v: valueCol }, ["g", "v"], {
+const donut = (id, title, dv, field, groupLabel, valueCol, { size = 8, query = "", dataType = "string" } = {}) =>
+  lens(id, title, dv, "lnsPie", { g: terms(field, groupLabel, size, "v", true, dataType), v: valueCol }, ["g", "v"], {
     shape: "donut",
     layers: [{ layerId: L, layerType: "data", primaryGroups: ["g"], metrics: ["v"], numberDisplay: "percent",
       categoryDisplay: "default", legendDisplay: "show", nestedLegend: false }],
@@ -165,12 +173,15 @@ function dashboard(id, title, description, rows, { from, refreshMs }) {
 // =====================================================================
 // Dashboard 1 — Business Overview (exported Postgres data)
 // =====================================================================
+const LEDGER = 'not record_type : "failed_attempt"'
 const LOGIN_OK = 'event : "login" and outcome : "success"'
 const LOGIN_FAIL = 'event : "login" and outcome : "failure"'
 
 const b = {
-  totalTxn: metric("tensai-b-total-txn", "Total Transactions", "txn", count("Transactions")),
-  volume: metric("tensai-b-volume", "Transaction Volume", "txn", agg("sum", "amount", "Volume ($)")),
+  // LEDGER = completed/legacy ledger transactions only. Since 0007 the index also holds failed
+  // attempts (record_type failed_attempt); docs without record_type (pre-0007) still match.
+  totalTxn: metric("tensai-b-total-txn", "Total Transactions", "txn", count("Transactions"), LEDGER),
+  volume: metric("tensai-b-volume", "Transaction Volume", "txn", agg("sum", "amount", "Volume ($)"), LEDGER),
   txnSuccess: metric("tensai-b-success", "Transaction Success Rate", "txn", agg("average", "txn_success", "Success rate", fmt.pct), "", "status = COMPLETED"),
   // Distinct customers who logged in during the selected time range (live, follows activity).
   customers: metric("tensai-b-customers", "Active Customers", "logins", agg("unique_count", "user_id", "Customers", fmt.int), LOGIN_OK),
@@ -195,7 +206,7 @@ const b = {
     ["n", count("Transactions")],
     ["amt", agg("sum", "amount", "Volume ($)")],
     ["avg", agg("average", "amount", "Avg amount ($)")],
-  ], "n", "not self_transfer : true"),
+  ], "n", `not self_transfer : true and ${LEDGER}`),
 
   loginActivity: table("tensai-b-login-activity", "User Login Activity (count + last login)", "logins", [
     ["g", terms("username", "User", 20, "n")],
@@ -205,7 +216,7 @@ const b = {
   ], "n"),
   recentLogins: search("tensai-b-recent-logins", "Recent Login Events", "logins", ["username", "event", "outcome", "method", "email", "ip"]),
 
-  amountByCat: topBar("tensai-b-amount-by-cat", "Volume by Category", "txn", "category", "Category", agg("sum", "amount", "Volume ($)"), { color: C.teal }),
+  amountByCat: topBar("tensai-b-amount-by-cat", "Volume by Category", "txn", "category", "Category", agg("sum", "amount", "Volume ($)"), { color: C.teal, query: LEDGER }),
   recentTxn: search("tensai-b-recent-txn", "Recent Transactions", "txn", ["from_user", "to_user", "amount", "category", "status", "description"]),
 
   accountsByKind: donut("tensai-b-accounts-kind", "Accounts by Type", "accounts", "kind", "Account type", count("Accounts")),
@@ -293,8 +304,83 @@ const dash2 = dashboard("tensai-dashboard-apm", "Tensai SecBank — Real-time AP
     [10, [a.pageLoads, 48]],
   ], { from: "now-24h", refreshMs: 30000 })
 
+// =====================================================================
+// Dashboard 3 — Journeys, Failures & Satisfaction (0007). Same indices only:
+// tensai-transactions (attempts + feedback), tensai-login-events (location
+// consent), traces-apm* (session / journey / synthetic labels).
+// =====================================================================
+const ATT = "attempt_id : *"                                  // docs written by the attempt pipeline
+const FAILED = 'record_type : "failed_attempt"'
+const RATED = "feedback_rating : *"
+const API_TX = `${API} and labels.attempt_id : *`             // APM transactions that were money attempts
+
+const j = {
+  attempts: metric("tensai-j-attempts", "Transaction Attempts", "txn", count("Attempts"), ATT),
+  attemptRate: metric("tensai-j-attempt-success", "Attempt Success Rate", "txn", agg("average", "txn_success", "Success rate", fmt.pct), ATT),
+  failedAttempts: metric("tensai-j-failed", "Failed Attempts", "txn", count("Failed"), FAILED),
+  attemptLatency: metric("tensai-j-latency", "Avg Attempt Duration", "txn", agg("average", "duration_ms", "Avg (ms)", fmt.ms), ATT),
+  happyShare: metric("tensai-j-happy", "Happy Customers", "txn", agg("average", "fb_happy", "Happy share", fmt.pct), RATED, "share of ratings"),
+  locShare: metric("tensai-j-loc-share", "Location Shared", "logins", agg("average", "loc_granted", "Granted", fmt.pct), 'event : "login" and location_status : *', "share of sign-ins"),
+
+  attemptTrend: timeSeries("tensai-j-attempt-trend", "Attempts: Success vs Failure", "txn", [
+    { id: "ok", col: count("Successful", 'outcome : "success"'), color: C.green },
+    { id: "bad", col: count("Failed", 'outcome : "failure"'), color: C.red },
+  ], { query: ATT }),
+  failureCats: topBar("tensai-j-failure-cats", "Failure Categories", "txn", "error_category", "Category", count("Failures"),
+    { query: FAILED, color: C.red, size: 15 }),
+
+  latencyTrend: timeSeries("tensai-j-latency-trend", "Attempt Duration (avg / p95)", "txn", [
+    { id: "avg", col: agg("average", "duration_ms", "Avg (ms)", fmt.ms), color: C.blue },
+    { id: "p95", col: agg("percentile", "duration_ms", "P95 (ms)", fmt.ms, { percentile: 95 }), color: C.amber },
+  ], { query: ATT, type: "line" }),
+  satisfaction: donut("tensai-j-satisfaction", "Satisfaction", "txn", "feedback_rating", "Rating", count("Responses"), { query: RATED }),
+
+  byKind: table("tensai-j-by-kind", "Journey Health by Transaction Type", "txn", [
+    ["g", terms("kind", "Type", 5, "n")],
+    ["n", count("Attempts")],
+    ["sr", agg("average", "txn_success", "Success rate", fmt.pct)],
+    ["d", agg("average", "duration_ms", "Avg (ms)", fmt.ms)],
+    ["h", agg("average", "fb_happy", "Happy share", fmt.pct)],
+    ["ns", agg("average", "fb_not_satisfied", "Not satisfied share", fmt.pct)],
+  ], "n", ATT),
+  satByOutcome: table("tensai-j-sat-by-outcome", "Satisfaction by Outcome", "txn", [
+    ["g", terms("outcome", "Outcome", 3, "n")],
+    ["n", count("Responses", RATED)],
+    ["hp", count("Happy", 'feedback_rating : "HAPPY"')],
+    ["st", count("Satisfied", 'feedback_rating : "SATISFIED"')],
+    ["ns", count("Not satisfied", 'feedback_rating : "NOT_SATISFIED"')],
+    ["dm", count("Dismissed", 'feedback_status : "dismissed"')],
+  ], "n", ATT),
+
+  realVsSynthetic: donut("tensai-j-real-synthetic", "Real vs Synthetic Attempts", "txn", "is_synthetic", "Synthetic", count("Attempts"), { query: ATT, dataType: "boolean" }),
+  locationStatus: donut("tensai-j-location-status", "Sign-in Location Consent", "logins", "location_status", "Status", count("Sign-ins"), { query: 'event : "login"' }),
+  sessions: metric("tensai-j-sessions", "Active Sessions (APM)", "apm", agg("unique_count", "labels.session_id", "Sessions", fmt.int), API, "distinct login sessions"),
+  journeySteps: topBar("tensai-j-journey-steps", "Browser Journey Steps (RUM)", "apm", "transaction.name", "Page / route", count("Views"),
+    { query: `${WEB} and transaction.type : ("page-load" or "route-change")`, color: C.purple, size: 15 }),
+  apmCategories: topBar("tensai-j-apm-categories", "Failure Categories (APM traces)", "apm", "labels.error_category", "Category", count("Requests"),
+    { query: `${API_TX} and event.outcome : "failure"`, color: C.red }),
+  apmSynthetic: donut("tensai-j-apm-synthetic", "API Traffic: Real vs Synthetic", "apm", "labels.synthetic", "Synthetic", count("Requests"), { query: API }),
+
+  recentFailed: search("tensai-j-recent-failed", "Recent Failed Attempts", "txn",
+    ["from_user", "kind", "amount", "error_category", "failure_reason", "is_synthetic", "session_id"], FAILED),
+  recentFeedback: search("tensai-j-recent-feedback", "Recent Feedback", "txn",
+    ["from_user", "kind", "outcome", "feedback_rating", "error_category", "is_synthetic"], RATED),
+}
+
+const dash3 = dashboard("tensai-dashboard-journeys", "Tensai SecBank — Journeys, Failures & Satisfaction",
+  "Transaction attempts (success + failure categories), latency, customer feedback, sign-in location consent and real-vs-synthetic activity. " +
+  "Built on the existing tensai-transactions / tensai-login-events indices and traces-apm*. For a geographic map, see kibana/README.md.", [
+    [6, [j.attempts, 8], [j.attemptRate, 8], [j.failedAttempts, 8], [j.attemptLatency, 8], [j.happyShare, 8], [j.locShare, 8]],
+    [13, [j.attemptTrend, 32], [j.failureCats, 16]],
+    [12, [j.latencyTrend, 24], [j.satisfaction, 12], [j.realVsSynthetic, 12]],
+    [11, [j.byKind, 28], [j.satByOutcome, 20]],
+    [12, [j.recentFailed, 24], [j.recentFeedback, 24]],
+    [11, [j.locationStatus, 12], [j.sessions, 8], [j.journeySteps, 28]],
+    [11, [j.apmCategories, 24], [j.apmSynthetic, 24]],
+  ], { from: "now-24h", refreshMs: 60000 })
+
 // ---------- write + self-check ----------
-const objects = [...Object.values(DV).map(dataView), ...Object.values(b), ...Object.values(a), dash1, dash2]
+const objects = [...Object.values(DV).map(dataView), ...Object.values(b), ...Object.values(a), ...Object.values(j), dash1, dash2, dash3]
 const ids = new Set(objects.map((o) => `${o.type}:${o.id}`))
 if (ids.size !== objects.length) throw new Error("duplicate saved-object id")
 for (const o of objects)
@@ -314,4 +400,6 @@ const write = (file, objs) => {
 write("./tensai-dashboards.ndjson", objects)
 // Same objects minus the dashboards: re-importing this updates every panel in
 // place without overwriting layout changes made to the dashboards in Kibana.
-write("./tensai-panels-update.ndjson", objects.filter((o) => o.type !== "dashboard"))
+// Also carries the NEW Journeys dashboard (new id, so importing can't overwrite a dashboard
+// you customised); the two original dashboards are never included here.
+write("./tensai-panels-update.ndjson", objects.filter((o) => o.type !== "dashboard" || o.id === dash3.id))

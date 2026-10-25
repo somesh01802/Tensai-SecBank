@@ -12,6 +12,7 @@ export default defineConfig({
         port: 5173,
         proxy: {
             "/api": {
+                // PHP backend (api/.env PORT). Was http://localhost:3000 for the old Node backend.
                 target: "http://localhost:8090",
                 changeOrigin: true
             }

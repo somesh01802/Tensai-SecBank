@@ -9,7 +9,7 @@ use Tensai\Controllers\{
     ProfileController, DashboardController, InvestmentController, CardController, BillController,
     NotificationController, AccountAppController, LoanController, AutopayController, CardAppController,
     PayeeController, TransferController, RecurringBillController, StatisticsController, RewardsController,
-    ChatbotController
+    ChatbotController, FeedbackController, AdminController
 };
 
 /**
@@ -19,6 +19,7 @@ use Tensai\Controllers\{
 return function (App $app): void {
     $auth = new Auth();
     $system = new Auth(true);
+    $admin = new Auth(false, 'ADMIN');
 
     $app->get('/', function (Request $q, Response $r) {
         $r->getBody()->write('Tensai SecBank API is up and running');
@@ -26,7 +27,7 @@ return function (App $app): void {
     });
     $app->get('/health', fn(Request $q, Response $r) => Http::json($r, ['status' => 'ok', 'service' => 'tensai-secbank']));
 
-    $app->group('/api', function ($g) use ($auth, $system) {
+    $app->group('/api', function ($g) use ($auth, $system, $admin) {
         $ac = new AuthController();
         $acc = new AccountController();
         $tx = new TransactionController();
@@ -55,6 +56,21 @@ return function (App $app): void {
         $g->get('/auth/me', [$ac, 'me'])->add($auth);
         $g->get('/auth/mpin', [$ac, 'hasMpin'])->add($auth);
         $g->post('/auth/mpin', [$ac, 'setMpin'])->add($auth);
+        $g->post('/auth/location', [$ac, 'location'])->add($auth);
+
+        // ---- post-transaction feedback ----
+        $fb = new FeedbackController();
+        $g->post('/feedback', [$fb, 'submit'])->add($auth);
+
+        // ---- admin (role enforced server-side; every call audited) ----
+        $adm = new AdminController();
+        $g->get('/admin/summary', [$adm, 'summary'])->add($admin);
+        $g->get('/admin/customers', [$adm, 'customers'])->add($admin);
+        $g->get('/admin/customers/{id}', [$adm, 'customer'])->add($admin);
+        $g->get('/admin/transactions', [$adm, 'transactions'])->add($admin);
+        $g->get('/admin/transactions/{id}', [$adm, 'transaction'])->add($admin);
+        $g->get('/admin/feedback', [$adm, 'feedback'])->add($admin);
+        $g->get('/admin/audit', [$adm, 'auditLog'])->add($admin);
 
         // ---- accounts ----
         $g->post('/accounts', [$acc, 'create'])->add($auth);

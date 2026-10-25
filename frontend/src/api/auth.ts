@@ -7,7 +7,7 @@ export const authApi = {
     return data
   },
 
-  login: async (payload: { email?: string; mobileNumber?: string; password?: string; mpin?: string }) => {
+  login: async (payload: { email?: string; mobileNumber?: string; password?: string; mpin?: string; loginAs?: "customer" | "admin" }) => {
     const { data } = await api.post<AuthResponse & { hasMpin?: boolean }>("/auth/login", payload)
     return data
   },

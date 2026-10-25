@@ -10,7 +10,9 @@ import type {
   AutoPay,
   RecurringBill,
   ScheduledTransfer,
-  Frequency
+  Frequency,
+  LocationStatus,
+  FeedbackRating
 } from "@/types/api"
 
 /* ------------------------------- Auth v2 ------------------------------- */
@@ -187,4 +189,24 @@ export const rewardsApi = {
       "/rewards/event",
       { condition }
     )).data
+}
+
+/* --------------------- Login location + transaction feedback --------------------- */
+
+export const experienceApi = {
+  /** Consent outcome for one login. Coordinates only when the user granted permission. */
+  location: async (payload: {
+    loginEventId: number
+    status: LocationStatus
+    latitude?: number
+    longitude?: number
+    accuracy?: number
+  }) => (await api.post("/auth/location", payload)).data,
+
+  feedback: async (payload: {
+    attemptId: string
+    rating?: FeedbackRating
+    comment?: string
+    dismissed?: boolean
+  }) => (await api.post("/feedback", payload)).data
 }
