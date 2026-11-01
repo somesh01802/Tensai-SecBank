@@ -148,3 +148,105 @@ sudo -u postgres psql -p 5433 tensai -v ON_ERROR_STOP=1 -f api/migrations/rollba
 Kibana: `git show 804f926:kibana/tensai-panels-update.ndjson > /tmp/panels-prev.ndjson`,
 import with overwrite, delete the Journeys dashboard; optionally remove failed-attempt
 docs: `POST tensai-transactions/_delete_by_query {"query":{"term":{"record_type":"failed_attempt"}}}`.
+
+---
+
+# Upgrade 0008: SecBank dashboards (journey telemetry, Elasticsearch pipeline, simulator, D0-D9, Canvas)
+
+Additive release on top of 0007 (commits `fe0ce92` .. this one). No frontend change (no rebuild), no change to
+existing tables' rows, no change to the existing `tensai-*` indices or dashboards. If 0007 is not deployed yet,
+`migrate.php` applies 0007 and 0008 in order; also run the 0007 steps (create-admin) above.
+
+## What it adds
+- `migrations/0008_bank_journeys.sql`: lookup tables (`bank_regions`, `bank_branches`, `bank_journeys`,
+  `bank_journey_steps`), `users.segment` / `users.home_branch_id` (filled only where NULL, plus a trigger for new
+  users), `journey_events`, `disputes`, `CARD` attempt kind. Rollback: `migrations/rollback/0008_bank_journeys.down.sql`.
+- API: journey step events (`Journey` middleware), `POST /api/journey/step`, `POST /api/cards/{id}/pay`,
+  `GET|POST /api/disputes`.
+- Elasticsearch (key `ES_BANK_API_KEY`, never the tensai-* key): data streams `logs-bank.business-default`,
+  `logs-bank.app-default`, `logs-bank.synthetics-default`, `metrics-bank.platform-default` (ILM `bank-30d`: 30 days);
+  lookup indices `bank-branches`, `bank-journeys`, `bank-journey-steps`, `bank-customers`; `bank-journey-health`
+  (90 days), `bank-problems`, `bank-problem-rank`, `bank-risks`, `bank-ai-scores`, `bank-demo-ledger` (ground truth).
+- Jobs: exporter also ships journey events + customers; `bin/journey-health.php` every minute (health index,
+  problem detection, risks); `bin/simulate.php` (simulated bank, `deploy/tensai-simulator.service`).
+- Kibana: `kibana/secbank-dashboards.ndjson` (D0-D9, Canvas `SecBank wallboard`), new ids only. See `kibana/README.md`.
+
+## Required environment (api/.env)
+| Variable | Value |
+|---|---|
+| `ES_BANK_API_KEY` | key `tensai-bank-pipeline-v2` (logs-bank.\*, metrics-bank.\*, bank-\* write; tensai-\* read). Already set. |
+| `APM_SERVER_URL` / `APM_SECRET_TOKEN` | not needed: the simulator reads the PHP agent's `elastic_apm.*` from the fpm config |
+
+## Deploy
+```bash
+cd /var/www/tensai-secbank
+sudo php api/bin/traffic.php --stop                                        # pause the real-app load generator
+sudo -u postgres pg_dump -p 5433 -Fc tensai -f /var/backups/tensai/pre-0008-$(date +%F-%H%M).dump
+ls -lh /var/backups/tensai/ | tail -2                                      # the dump must exist and be > 0 bytes
+sudo git status --short                                                    # expect no local edits besides build artefacts
+sudo git checkout -- frontend/tsconfig.node.tsbuildinfo frontend/vite.config.js 2>/dev/null
+sudo git pull origin main
+sudo php api/bin/migrate.php                                               # applies 0008 (re-running is safe)
+sudo systemctl restart php8.1-fpm && sudo apachectl configtest && sudo systemctl reload apache2
+sudo install -d -o www-data -g www-data api/var                            # simulator fault switches live here
+
+cd api
+sudo -u www-data php bin/setup-elastic.php                                 # ILM, templates, data streams, lookups, indices
+sudo flock /tmp/tensai-export.lock php bin/export-to-elastic.php          # one FULL export: journey events + customers
+sudo php bin/traffic.php --resume && sudo systemctl restart 'tensai-traffic@*'
+
+# Health index + problem detection every minute (after the exporter's minute).
+echo '* * * * * www-data cd /var/www/tensai-secbank/api && sleep 20 && flock -n /tmp/tensai-health.lock php bin/journey-health.php >> /var/log/tensai-health.log 2>&1' \
+  | sudo tee /etc/cron.d/tensai-secbank-health
+sudo touch /var/log/tensai-health.log && sudo chown www-data /var/log/tensai-health.log
+
+# Simulated bank, live 24/7 at 10 % of the demo volume.
+sudo cp ../deploy/tensai-simulator.service /etc/systemd/system/ && sudo systemctl daemon-reload
+sudo systemctl enable --now tensai-simulator
+sudo -u www-data php bin/simulate.php --ai-history=60                      # D9 history (simulated, labelled)
+```
+Optional, a week of quiet baseline so ML jobs have history (about 30 minutes to send; run once, before any demo):
+`sudo -u www-data php -d memory_limit=1G bin/simulate.php --backfill=10080 --scale=0.1 --run=none --seed=7`
+
+Kibana: **Stack Management → Saved Objects → Import** `kibana/secbank-dashboards.ndjson` ("Check for existing
+objects", overwrite). Only `secbank-*` objects and the `SecBank wallboard` workpad are created.
+
+## Demo runs
+- Live: `sudo -u www-data php bin/simulate.php --start=S1` (S1..S10) and `--stop=S1`; `--list` shows what runs.
+- Frozen four-problem hour (the spec's 17:46 screen), simulator paused:
+```bash
+sudo systemctl stop tensai-simulator
+sudo -u www-data php -d memory_limit=1G bin/simulate.php --backfill=60 --run=four --seed=$(date +%s)
+# then run the exact command it prints, e.g.:
+sudo -u www-data php bin/journey-health.php --minutes=65 --replay --at=<epoch it printed>
+```
+  Set the dashboards' time picker to that hour; Canvas: set the header time filter (or rebuild with
+  `SECBANK_CANVAS_TIME`). A new `--seed` per rehearsal keeps runs separate. Restart the live simulator afterwards.
+
+## Verify
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1/api/journey/step     # 401 (route exists, needs auth)
+sudo -u postgres psql -p 5433 tensai -c "SELECT segment, count(*) FROM users GROUP BY 1"   # retail/premier/sme, no NULL
+sudo -u postgres psql -p 5433 tensai -c "SELECT journey, status, count(*) FROM journey_events
+  WHERE created_at > now() - interval '15 minutes' GROUP BY 1,2 ORDER BY 3 DESC"
+tail -n 3 /var/log/tensai-health.log                       # [health] ... docs, [problems] open N
+journalctl -u tensai-simulator -n 5 --no-pager             # APM sink: https://... (Bearer auth)
+set -a; . /var/www/tensai-secbank/api/.env; set +a
+curl -s -H "Authorization: ApiKey $ES_BANK_API_KEY" "$ES_URL/_cat/indices/*bank*?v&h=index,docs.count,store.size"
+```
+In Kibana open `SecBank D0 · Bank Pulse` (last 60 minutes): the scorecard lists ten journeys; D5's service table lists
+the simulated services (needs the simulator's APM sink). Query check from a workstation with the key in the env:
+`ES_BANK_API_KEY=... node kibana/build-secbank.mjs --check $ES_URL` (prints any failing panel).
+
+## Rollback
+```bash
+cd /var/www/tensai-secbank
+sudo systemctl disable --now tensai-simulator && sudo rm /etc/cron.d/tensai-secbank-health
+sudo git checkout --detach d54b693      # 0007 release (undo: sudo git checkout main); the 0008 schema is additive
+sudo systemctl restart php8.1-fpm
+# Only if the schema itself must go (destroys 0008 data only; take a dump first):
+sudo -u postgres psql -p 5433 tensai -v ON_ERROR_STOP=1 -f api/migrations/rollback/0008_bank_journeys.down.sql
+```
+Elasticsearch (only if the SecBank data must go; deletes simulated data and the journey copy, nothing in `tensai-*`):
+`DELETE _data_stream/logs-bank.*,metrics-bank.*` then `DELETE bank-*` and `DELETE _index_template/logs-bank.*,metrics-bank.*`.
+Kibana: Saved Objects → search `secbank` → select all → Delete; Canvas → delete `SecBank wallboard`.

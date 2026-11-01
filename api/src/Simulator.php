@@ -84,12 +84,13 @@ final class Simulator
         foreach (Db::all('SELECT * FROM bank_journey_steps ORDER BY journey, step_index') as $s) $this->steps[$s['journey']][] = $s;
         foreach (Db::all('SELECT b.id, b.latitude, b.longitude, b.atm_count, r.name AS region FROM bank_branches b JOIN bank_regions r ON r.id = b.region_id') as $b)
             $this->branches[$b['id']] = [$b['region'], round((float) $b['latitude'], 4), round((float) $b['longitude'], 4), (int) $b['atmCount']];
-        // Pseudonymous refs, unique and distinct from every real customer's ref.
+        // Pseudonymous refs, unique and distinct from every real customer's ref. One fixed customer base whatever
+        // the run seed, so rehearsals with new seeds do not keep adding customers to bank-customers.
         $taken = array_flip(array_map(fn($u) => BankExport::customerRef($u['id']), Db::all('SELECT id FROM users')));
         $ids = array_keys($this->branches);
-        mt_srand($seed * 7919);
+        mt_srand(7919);
         for ($i = 0; count($this->customers) < $customers; $i++) {
-            $ref = 'C-' . strtoupper(substr(md5("sim|$seed|$i"), 0, 6));
+            $ref = 'C-' . strtoupper(substr(md5("sim|1|$i"), 0, 6));
             if (isset($taken[$ref])) continue;
             $taken[$ref] = true;
             $p = mt_rand(0, 99);
