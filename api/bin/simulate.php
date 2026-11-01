@@ -1,8 +1,10 @@
 <?php
 /**
  * SecBank simulator: simulated bank telemetry for the D0-D9 dashboards and the Canvas wallboard.
- * Writes only to logs-bank.* / metrics-bank.* / bank-* (ES_BANK_API_KEY) and, when APM_SERVER_URL is set,
- * simulated microservice traces to the APM Server intake. Never touches Postgres data or tensai-* indices.
+ * Writes only to logs-bank.* / metrics-bank.* / bank-* (ES_BANK_API_KEY) and simulated microservice traces
+ * to the APM Server intake. The APM server URL and secret token / API key are read from the PHP agent's
+ * elastic_apm.* settings (fpm php.ini, conf.d, pool config), so no APM secret is copied into .env;
+ * APM_SERVER_URL + APM_SECRET_TOKEN / APM_API_KEY in .env override them. Never touches Postgres data or tensai-* indices.
  * Run bin/setup-elastic.php once first.
  *
  *   php bin/simulate.php --backfill=60 --run=s1        the hour ending now, S1 from 18 min before the end (17:28 of 17:46)
@@ -28,7 +30,24 @@ $dry = isset($o['dry-run']);
 $seed = (int) ($o['seed'] ?? 1);
 $scale = (float) ($o['scale'] ?? 1.0);
 if (!$dry && (!Es::env('ES_URL') || !Es::env('ES_BANK_API_KEY'))) { fwrite(STDERR, "ES_URL and ES_BANK_API_KEY must be set (api/.env)\n"); exit(1); }
-$apmOn = !isset($o['no-apm']) && Es::env('APM_SERVER_URL');
+
+/** APM intake target: .env override, else the PHP agent's own settings. [url, 'Bearer <token>' | 'ApiKey <key>' | null] or null. */
+function apmConfig(): ?array
+{
+    if ($u = Es::env('APM_SERVER_URL'))
+        return [$u, ($k = Es::env('APM_API_KEY')) ? "ApiKey $k" : (($k = Es::env('APM_SECRET_TOKEN')) ? "Bearer $k" : null)];
+    $files = array_merge(glob('/etc/php/*/fpm/php.ini') ?: [], glob('/etc/php/*/fpm/conf.d/*.ini') ?: [], glob('/etc/php/*/fpm/pool.d/*.conf') ?: []);
+    $c = [];
+    foreach ($files as $f) {
+        $ini = @parse_ini_file($f, false, INI_SCANNER_RAW) ?: [];
+        // pool.d sets them as php_value[elastic_apm.x] / php_admin_value[elastic_apm.x]
+        foreach (array_merge($ini, $ini['php_value'] ?? [], $ini['php_admin_value'] ?? []) as $k => $v)
+            if (is_string($v) && str_starts_with((string) $k, 'elastic_apm.')) $c[substr($k, 12)] = trim($v, "\"' ");
+    }
+    if (empty($c['server_url'])) return null;
+    return [$c['server_url'], !empty($c['api_key']) ? 'ApiKey ' . $c['api_key'] : (!empty($c['secret_token']) ? 'Bearer ' . $c['secret_token'] : null)];
+}
+$apmOn = isset($o['no-apm']) ? null : apmConfig();
 
 const INDEX = ['business' => 'logs-bank.business-default', 'app' => 'logs-bank.app-default', 'synth' => 'logs-bank.synthetics-default',
     'platform' => 'metrics-bank.platform-default', 'ledger' => BankExport::LEDGER];
@@ -73,7 +92,7 @@ if (isset($o['start']) || isset($o['stop'])) {
 // ---- writer ----
 $counts = [];
 /** Send due rows. ES: bulk create per index. APM: one intake request per service (metadata line first). */
-function send(array $rows, bool $dry, $apmOn, array &$counts): int
+function send(array $rows, bool $dry, ?array $apmOn, array &$counts): int
 {
     $failed = 0;
     $by = [];
@@ -96,18 +115,18 @@ function send(array $rows, bool $dry, $apmOn, array &$counts): int
             'labels' => ['synthetic_user' => true, 'data_source' => 'simulator']]];
         foreach (array_chunk($docs, 500) as $chunk) {
             $body = json_encode($meta) . "\n" . implode("\n", array_map(fn($x) => json_encode($x['event'], JSON_UNESCAPED_SLASHES), $chunk)) . "\n";
-            $failed += apmSend($body) ? 0 : count($chunk);
+            $failed += apmSend($apmOn, $body) ? 0 : count($chunk);
         }
     }
     return $failed;
 }
 
-function apmSend(string $body): bool
+function apmSend(array $apm, string $body): bool
 {
+    [$url, $auth] = $apm;
     $h = ['Content-Type: application/x-ndjson'];
-    if ($k = Es::env('APM_API_KEY')) $h[] = "Authorization: ApiKey $k";
-    elseif ($k = Es::env('APM_SECRET_TOKEN')) $h[] = "Authorization: Bearer $k";
-    $ch = curl_init(rtrim((string) Es::env('APM_SERVER_URL'), '/') . '/intake/v2/events');
+    if ($auth) $h[] = "Authorization: $auth";
+    $ch = curl_init(rtrim($url, '/') . '/intake/v2/events');
     curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $body, CURLOPT_HTTPHEADER => $h, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 60]);
     $raw = curl_exec($ch);
     $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -123,7 +142,8 @@ if (!$dry) {
     $f = BankExport::simCustomers($sim->customers());
     echo '[sim] ' . count($sim->customers()) . ' simulated customers -> bank-customers' . ($f ? " ($f FAILED)" : '') . "\n";
 }
-echo '[sim] APM sink: ' . ($apmOn ? Es::env('APM_SERVER_URL') : 'off (APM_SERVER_URL not set or --no-apm)') . "\n";
+echo '[sim] APM sink: ' . ($apmOn ? $apmOn[0] . ' (' . ($apmOn[1] ? strtok($apmOn[1], ' ') : 'no') . ' auth)'
+    : 'off (no elastic_apm.server_url in the PHP agent settings, or --no-apm)') . "\n";
 
 // ---- backfill ----
 if (isset($o['backfill'])) {
