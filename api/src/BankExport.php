@@ -67,7 +67,7 @@ final class BankExport
             'bank.branch.id' => 'keyword', 'labels.synthetic_user' => 'boolean', 'labels.data_source' => 'keyword'],
     ];
 
-    private const HEALTH_FIELDS = ['@timestamp' => 'date', 'journey.name' => 'keyword', 'labels.synthetic_user' => 'boolean',
+    private const HEALTH_FIELDS = ['@timestamp' => 'date', 'journey.name' => 'keyword', 'labels.synthetic_user' => 'boolean', 'labels.data_source' => 'keyword',
         'health.attempts' => 'long', 'health.completed' => 'long', 'health.tech_failures' => 'long',
         'health.satisfied' => 'long', 'health.tolerating' => 'long', 'health.page_views' => 'long',
         'health.page_views_pass' => 'long', 'health.value_failed' => 'double', 'health.slo_completion_pct' => 'double',
@@ -102,34 +102,69 @@ final class BankExport
         echo "  $index exists, mapping updated additively\n";
     }
 
-    /** Idempotent one-time setup: ILM, template, data stream, lookups (seeded from Postgres), health index. */
+    /** Data streams: name => [description, extra fields on top of eventMapping()]. All 30-day retention. */
+    public const STREAMS = [
+        'logs-bank.business-default' => ['SecBank business events: journey steps, page views, branch/ATM activity', []],
+        'logs-bank.app-default' => ['SecBank service logs and deployments', ['log.level' => 'keyword', 'bank.log_pattern' => 'keyword']],
+        'logs-bank.synthetics-default' => ['SecBank synthetic monitor runs', ['monitor.id' => 'keyword', 'monitor.name' => 'keyword',
+            'monitor.type' => 'keyword', 'monitor.status' => 'keyword', 'monitor.duration.us' => 'long', 'observer.geo.name' => 'keyword',
+            'summary.up' => 'integer', 'summary.down' => 'integer', 'error.message' => 'keyword',
+            'tls.server.x509.not_after' => 'date', 'tls.server.x509.subject.common_name' => 'keyword']],
+        'metrics-bank.platform-default' => ['SecBank platform metrics: Kubernetes, JVM pools, queues, PostgreSQL', [
+            'metricset.name' => 'keyword', 'host.name' => 'keyword', 'orchestrator.cluster.name' => 'keyword',
+            'kubernetes.namespace' => 'keyword', 'kubernetes.node.name' => 'keyword', 'kubernetes.node.ready' => 'boolean',
+            'kubernetes.node.cpu.pct' => 'double', 'kubernetes.node.memory.pct' => 'double',
+            'kubernetes.pod.name' => 'keyword', 'kubernetes.pod.phase' => 'keyword', 'kubernetes.pod.restarts' => 'integer',
+            'kubernetes.pod.cpu.pct' => 'double', 'kubernetes.pod.memory.pct' => 'double', 'kubernetes.pod.memory.limit.bytes' => 'long',
+            'jvm.http_pool.used' => 'integer', 'jvm.http_pool.max' => 'integer', 'jvm.db_pool.used' => 'integer', 'jvm.db_pool.max' => 'integer',
+            'queue.name' => 'keyword', 'queue.depth' => 'long', 'postgresql.connections' => 'integer', 'postgresql.max_connections' => 'integer',
+            'postgresql.lock_waits' => 'integer', 'postgresql.slow_queries' => 'integer', 'postgresql.table' => 'keyword',
+            'postgresql.query.time_ms' => 'double']],
+    ];
+    public const LEDGER = 'bank-demo-ledger';
+    private const LEDGER_FIELDS = ['@timestamp' => 'date', 'scenario.id' => 'keyword', 'scenario.symptom' => 'keyword',
+        'problem.id' => 'keyword', 'problem.severity' => 'keyword', 'cause.line' => 'keyword', 'cause.service' => 'keyword',
+        'cause.component' => 'keyword', 'cause.type' => 'keyword', 'started_at' => 'date', 'ended_at' => 'date', 'labels.data_source' => 'keyword'];
+
+    /** Idempotent one-time setup: ILM, templates, data streams, lookups (seeded from Postgres), health and ledger indices. */
     public static function setup(): void
     {
-        Es::ok('PUT', '/_ilm/policy/bank-business-30d', ['policy' => ['phases' => [
+        Es::ok('PUT', '/_ilm/policy/bank-30d', ['policy' => ['phases' => [
             'hot' => ['actions' => ['rollover' => ['max_age' => '1d', 'max_primary_shard_size' => '10gb']]],
             'delete' => ['min_age' => '30d', 'actions' => ['delete' => new \stdClass()]]]]]);
-        echo "  ILM policy bank-business-30d (rollover 1d, delete after 30d)\n";
-        // Priority 500 beats the built-in logs-*-* template (100) for this dataset only.
-        Es::ok('PUT', '/_index_template/logs-bank.business', [
-            'index_patterns' => ['logs-bank.business-*'], 'data_stream' => new \stdClass(), 'priority' => 500,
-            '_meta' => ['owner' => 'tensai-secbank', 'description' => 'SecBank business journey events'],
-            'template' => ['settings' => ['index.lifecycle.name' => 'bank-business-30d', 'number_of_shards' => 1],
-                'mappings' => self::eventMapping()]]);
-        echo "  index template logs-bank.business\n";
-        [$code, $j] = Es::req('PUT', '/_data_stream/' . self::STREAM, '', self::K);
-        if ($code >= 300 && ($j['error']['type'] ?? '') !== 'resource_already_exists_exception')
-            throw new \RuntimeException('create data stream HTTP ' . $code . ': ' . json_encode($j['error'] ?? $j));
-        // Push later field additions to the current backing index too (data_stream.* constants are fixed at creation).
-        $m = self::eventMapping();
-        unset($m['properties']['data_stream']);
-        Es::ok('PUT', '/' . self::STREAM . '/_mapping', $m);
-        echo '  data stream ' . self::STREAM . "\n";
+        echo "  ILM policy bank-30d (rollover 1d, delete after 30d)\n";
+        foreach (self::STREAMS as $stream => [$desc, $extra]) {
+            $name = substr($stream, 0, -strlen('-default'));
+            $m = self::eventMapping();
+            $m['properties'] = array_replace_recursive($m['properties'], self::props($extra));
+            // Priority 500 beats the built-in logs-*-* / metrics-*-* templates (100) for these datasets only.
+            Es::ok('PUT', "/_index_template/$name", [
+                'index_patterns' => ["$name-*"], 'data_stream' => new \stdClass(), 'priority' => 500,
+                '_meta' => ['owner' => 'tensai-secbank', 'description' => $desc],
+                'template' => ['settings' => ['index.lifecycle.name' => 'bank-30d', 'number_of_shards' => 1], 'mappings' => $m]]);
+            [$code, $j] = Es::req('PUT', "/_data_stream/$stream", '', self::K);
+            if ($code >= 300 && ($j['error']['type'] ?? '') !== 'resource_already_exists_exception')
+                throw new \RuntimeException("create data stream $stream HTTP $code: " . json_encode($j['error'] ?? $j));
+            // Push later field additions to the current backing index too (data_stream.* constants are fixed at creation).
+            unset($m['properties']['data_stream']);
+            Es::ok('PUT', "/$stream/_mapping", $m);
+            echo "  template + data stream $stream\n";
+        }
 
         foreach (self::LOOKUPS as $index => $fields)
             self::ensureIndex($index, ['dynamic' => false, 'properties' => self::props($fields)], ['index.mode' => 'lookup']);
         self::ensureIndex(self::HEALTH, ['dynamic' => false, 'properties' => self::props(self::HEALTH_FIELDS)],
             ['number_of_shards' => 1]);
+        // Ground truth for scoring. Presenter and agent roles must not be granted read on it.
+        self::ensureIndex(self::LEDGER, ['dynamic' => false, 'properties' => self::props(self::LEDGER_FIELDS)], ['number_of_shards' => 1]);
         self::seedLookups();
+    }
+
+    /** Simulator customers -> bank-customers lookup (they exist only in Elasticsearch). */
+    public static function simCustomers(array $customers): int
+    {
+        return Es::bulk('bank-customers', array_map(fn($c) => [$c[0], ['bank' => ['customer' => ['ref' => $c[0], 'segment' => $c[1]],
+            'region' => $c[2], 'branch' => ['id' => $c[3]]], 'labels' => ['synthetic_user' => true, 'data_source' => 'simulator']]], $customers), false, self::K);
     }
 
     private static function seedLookups(): void
@@ -232,33 +267,35 @@ final class BankExport
         return $f;
     }
 
-    /** Journey health index per journey, per minute, real and synthetic separately. Recomputes the last $minutes. */
+    /** Journey health index per journey, per minute, per data source and synthetic flag. Recomputes the last $minutes. */
     public static function health(int $minutes = 5): int
     {
         $from = "DATE_TRUNC(1 minute, NOW() - $minutes minutes)";
+        // Apdex T = half the journey's p95 target (bill pay: 10 s, as on D0); tolerating up to 4T. Pending counts as lost.
         $rows = Es::esql('FROM ' . self::STREAM . "
-            | WHERE @timestamp >= $from AND event.category == \"journey\" AND journey.status IN (\"completed\", \"failed\", \"abandoned\")
-            | EVAL minute = DATE_TRUNC(1 minute, @timestamp),
+            | WHERE @timestamp >= $from AND event.category == \"journey\" AND journey.status IN (\"completed\", \"failed\", \"abandoned\", \"pending\")
+            | LOOKUP JOIN bank-journeys ON journey.name
+            | EVAL minute = DATE_TRUNC(1 minute, @timestamp), t = journey.p95_target_ms / 2,
                    done = CASE(journey.status == \"completed\", 1, 0),
                    tech = CASE(journey.failure_class == \"technical\", 1, 0),
-                   sat = CASE(journey.status == \"completed\" AND journey.duration_ms <= 10000, 1, 0),
-                   tol = CASE(journey.status == \"completed\" AND journey.duration_ms > 10000 AND journey.duration_ms <= 40000, 1, 0),
+                   sat = CASE(journey.status == \"completed\" AND journey.duration_ms <= t, 1, 0),
+                   tol = CASE(journey.status == \"completed\" AND journey.duration_ms > t AND journey.duration_ms <= 4 * t, 1, 0),
                    vf = CASE(journey.failure_class == \"technical\", bank.txn.amount, 0.0)
             | STATS attempts = COUNT(*), completed = SUM(done), tech_failures = SUM(tech), satisfied = SUM(sat),
-                    tolerating = SUM(tol), value_failed = SUM(vf) BY journey.name, labels.synthetic_user, minute");
+                    tolerating = SUM(tol), value_failed = SUM(vf) BY journey.name, labels.synthetic_user, labels.data_source, minute");
+        $key = fn($r) => $r['journey.name'] . '|' . json_encode($r['labels.synthetic_user']) . '|' . $r['labels.data_source'] . '|' . $r['minute'];
         $views = [];
         foreach (Es::esql('FROM ' . self::STREAM . "
             | WHERE @timestamp >= $from AND event.category == \"page_view\"
             | EVAL minute = DATE_TRUNC(1 minute, @timestamp), ok = CASE(page.vitals_pass, 1, 0)
-            | STATS views = COUNT(*), pass = SUM(ok) BY journey.name, labels.synthetic_user, minute") as $v)
-            $views[$v['journey.name'] . '|' . json_encode($v['labels.synthetic_user']) . '|' . $v['minute']] = $v;
+            | STATS views = COUNT(*), pass = SUM(ok) BY journey.name, labels.synthetic_user, labels.data_source, minute") as $v)
+            $views[$key($v)] = $v;
         $slo = array_column(Db::all('SELECT name, slo_completion_pct FROM bank_journeys'), 'sloCompletionPct', 'name');
 
         $docs = [];
         foreach ($rows as $r) {
             if (!isset($slo[$r['journey.name']]) || !$r['attempts']) continue;
-            $key = $r['journey.name'] . '|' . json_encode($r['labels.synthetic_user']) . '|' . $r['minute'];
-            $docs[] = [md5($key), self::healthDoc($r, (float) $slo[$r['journey.name']], $views[$key] ?? null)];
+            $docs[] = [md5($key($r)), self::healthDoc($r, (float) $slo[$r['journey.name']], $views[$key($r)] ?? null)];
         }
         $f = $docs ? Es::bulk(self::HEALTH, $docs, false, self::K) : 0;
         // Retention: 90 days (plain index, so per-document cleanup instead of ILM index deletion).
@@ -280,7 +317,7 @@ final class BankExport
         $jhi = round(100 * (0.40 * $c + 0.25 * $a + 0.20 * $e + 0.15 * $x), 1);
         return [
             '@timestamp' => $r['minute'], 'journey' => ['name' => $r['journey.name']],
-            'labels' => ['synthetic_user' => (bool) $r['labels.synthetic_user']],
+            'labels' => ['synthetic_user' => (bool) $r['labels.synthetic_user'], 'data_source' => $r['labels.data_source'] ?? null],
             'health' => ['attempts' => $n, 'completed' => (int) $r['completed'], 'tech_failures' => (int) $r['tech_failures'],
                 'satisfied' => (int) $r['satisfied'], 'tolerating' => (int) $r['tolerating'],
                 'page_views' => (int) ($views['views'] ?? 0), 'page_views_pass' => (int) ($views['pass'] ?? 0),

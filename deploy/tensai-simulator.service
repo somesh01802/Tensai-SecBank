@@ -1,0 +1,25 @@
+# SecBank simulator, live (api/bin/simulate.php): simulated bank telemetry for the D0-D9 dashboards,
+# written to logs-bank.* / metrics-bank.* / bank-* and (if APM_SERVER_URL is set) the APM Server.
+# Labelled data_source=simulator everywhere. Does not touch Postgres data or tensai-* indices.
+#   sudo cp deploy/tensai-simulator.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now tensai-simulator
+# Presenter keys (fault on/off, written to the ledger):
+#   sudo -u www-data php /var/www/tensai-secbank/api/bin/simulate.php --start=S1    (S1..S10)
+#   sudo -u www-data php /var/www/tensai-secbank/api/bin/simulate.php --stop=S1
+# Stop entirely: sudo systemctl disable --now tensai-simulator
+[Unit]
+Description=Tensai SecBank telemetry simulator (live)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/tensai-secbank/api
+# 10 % of the spec's 17:00 volume, shaped by the daily curve: ~120k journeys/day.
+ExecStart=/usr/bin/php -d memory_limit=512M bin/simulate.php --live --scale=0.1
+Restart=always
+RestartSec=10
+User=www-data
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

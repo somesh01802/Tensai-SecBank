@@ -16,8 +16,8 @@ $refresh = fn() => Es::req('POST', '/logs-bank.*,bank-*/_refresh', '', 'ES_BANK_
 ob_start(); BankExport::setup(); BankExport::setup(); ob_end_clean();
 check('setup runs twice (idempotent)', true);
 $tpl = Es::ok('GET', '/_index_template/logs-bank.business')['index_templates'][0]['index_template'] ?? [];
-check('template: priority 500, ILM bank-business-30d', ($tpl['priority'] ?? 0) === 500
-    && ($tpl['template']['settings']['index']['lifecycle']['name'] ?? '') === 'bank-business-30d');
+check('template: priority 500, ILM bank-30d', ($tpl['priority'] ?? 0) === 500
+    && ($tpl['template']['settings']['index']['lifecycle']['name'] ?? '') === 'bank-30d');
 $set = Es::ok('GET', '/bank-customers/_settings');
 check('bank-customers is a lookup index', (reset($set)['settings']['index']['mode'] ?? '') === 'lookup');
 $refresh();
@@ -31,7 +31,8 @@ $f = BankExport::customers(null) + BankExport::events(null) + BankExport::events
 ob_end_clean();
 $refresh();
 check('export: no failures', $f === 0, (string) $f);
-check('events exported once each (create + je-<id>)', (Es::ok('GET', '/' . BankExport::STREAM . '/_count')['count'] ?? -1) === $n);
+$appDocs = Es::ok('POST', '/' . BankExport::STREAM . '/_count', ['query' => ['term' => ['labels.data_source' => 'app']]])['count'] ?? -1;
+check('events exported once each (create + je-<id>)', $appDocs === $n, "$appDocs vs $n");
 
 $fail1 = Db::one("SELECT id FROM journey_events WHERE reason_code = 'insufficient_funds' ORDER BY id DESC LIMIT 1");
 $hit = Es::ok('POST', '/' . BankExport::STREAM . '/_search', ['query' => ['ids' => ['values' => ['je-' . $fail1['id']]]]])['hits']['hits'][0]['_source'] ?? [];
@@ -43,15 +44,15 @@ check('no PII in events (email/name)', !preg_match('/@test\.invalid|Journey Test
 $rows = Es::esql('FROM ' . BankExport::STREAM . ' | WHERE journey.name == "bill_pay"
     | LOOKUP JOIN bank-journey-steps ON journey.step_key | STATS n = COUNT(*) BY journey.step_label | SORT n DESC');
 check('ES|QL LOOKUP JOIN on bank-journey-steps', count($rows) > 0 && isset($rows[0]['journey.step_label']), json_encode($rows));
-$rows = Es::esql('FROM ' . BankExport::STREAM . ' | LOOKUP JOIN bank-customers ON bank.customer.ref | STATS n = COUNT(*) BY bank.branch.id | LIMIT 5');
+$rows = Es::esql('FROM ' . BankExport::STREAM . ' | WHERE labels.data_source == "app" | LOOKUP JOIN bank-customers ON bank.customer.ref | STATS n = COUNT(*) BY bank.branch.id | LIMIT 5');
 check('ES|QL LOOKUP JOIN on bank-customers (home branch)', count($rows) > 0 && isset($rows[0]['bank.branch.id']), json_encode($rows));
 
 ob_start(); $hf = BankExport::health(240); BankExport::health(240); ob_end_clean();
 $refresh();
-$h = Es::esql('FROM ' . BankExport::HEALTH . ' | STATS docs = COUNT(*), minutes = COUNT_DISTINCT(@timestamp) BY journey.name, labels.synthetic_user | LIMIT 100');
+$h = Es::esql('FROM ' . BankExport::HEALTH . ' | STATS docs = COUNT(*), minutes = COUNT_DISTINCT(@timestamp) BY journey.name, labels.synthetic_user, labels.data_source | LIMIT 500');
 $dup = array_filter($h, fn($r) => $r['docs'] !== $r['minutes']);
 check('health docs written, one per journey/minute/flag (re-run safe)', $hf === 0 && $h && !$dup, json_encode($h));
-$doc = Es::ok('POST', '/' . BankExport::HEALTH . '/_search', ['size' => 1, 'query' => ['term' => ['journey.name' => 'login']]])['hits']['hits'][0]['_source']['health'] ?? [];
+$doc = Es::ok('POST', '/' . BankExport::HEALTH . '/_search', ['size' => 1, 'query' => ['bool' => ['filter' => [['term' => ['journey.name' => 'login']], ['term' => ['labels.data_source' => 'app']]]]]])['hits']['hits'][0]['_source']['health'] ?? [];
 check('login health has JHI in 0..100 and a band', isset($doc['index']) && $doc['index'] >= 0 && $doc['index'] <= 100
     && in_array($doc['band'], ['healthy', 'watch', 'critical'], true), json_encode($doc));
 
