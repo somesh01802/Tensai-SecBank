@@ -340,7 +340,8 @@ final class Simulator
         $route = ($step === 'load_accounts' ? 'GET' : 'POST') . ' /api/' . str_replace('_', '-', $j) . '/' . str_replace('_', '-', $step);
         $gw = self::hex(16); $tx = self::hex(16);
         $techFail = $fail && $class === 'technical';
-        $res = $techFail ? 'HTTP 5xx' : ($fail ? 'HTTP 4xx' : 'HTTP 2xx');
+        // An expired OTP is the customer's 4xx, not a server error: auth-svc stays green while sms_otp degrades (S3).
+        $res = $techFail && $dep !== 'sms_otp' ? 'HTTP 5xx' : ($fail ? 'HTTP 4xx' : 'HTTP 2xx');
         $out = [$trace];
         $out[] = $this->apm('api-gateway', $t, ['transaction' => self::tx($gw, $trace, null, $route, $t, $ms + 12, $res, 'request', 1)]);
         $out[] = $this->apm($svc, $t, ['transaction' => self::tx($tx, $trace, $gw, $route, $t + 0.005, $ms, $res, 'request', count($spans))]);
