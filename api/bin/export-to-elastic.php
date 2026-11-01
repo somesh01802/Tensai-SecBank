@@ -25,31 +25,14 @@
 require __DIR__ . '/../vendor/autoload.php';
 if (is_file(__DIR__ . '/../.env')) \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
 
-use Tensai\{Db, Apm};
+use Tensai\{Db, Apm, Es, BankExport};
 
-function envv(string $k): ?string
-{
-    $v = $_ENV[$k] ?? getenv($k);
-    return ($v === false || $v === '') ? null : (string) $v;
-}
+function envv(string $k): ?string { return Es::env($k); }
 
-/** One Elasticsearch request. Returns [status, decoded JSON]. */
+/** One Elasticsearch request (tensai-* key). Returns [status, decoded JSON]. */
 function es(string $method, string $path, string $body = '', string $ctype = 'application/json'): array
 {
-    $h = ['Content-Type: ' . $ctype];
-    if ($k = envv('ES_API_KEY')) $h[] = 'Authorization: ApiKey ' . $k;
-    $ch = curl_init(rtrim((string) envv('ES_URL'), '/') . $path);
-    curl_setopt_array($ch, [CURLOPT_CUSTOMREQUEST => $method, CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => $h, CURLOPT_TIMEOUT => 120]);
-    if (!envv('ES_API_KEY') && envv('ES_USER')) curl_setopt($ch, CURLOPT_USERPWD, envv('ES_USER') . ':' . envv('ES_PASS'));
-    if (envv('ES_INSECURE')) { curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0); }
-    if ($body !== '') curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-    $raw = curl_exec($ch);
-    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $err = curl_error($ch);
-    curl_close($ch);
-    if ($raw === false) throw new RuntimeException("Elasticsearch unreachable: $err");
-    return [$code, json_decode($raw, true) ?: []];
+    return Es::req($method, $path, $body, 'ES_API_KEY', $ctype);
 }
 
 function ts(?string $v): ?string
@@ -259,6 +242,12 @@ $failed += export('tensai-login-events', "
         'geo_location' => geo($r['latitude'], $r['longitude']),
         'location_accuracy_m' => $r['accuracy_m'] !== null ? (float) $r['accuracy_m'] : null],
     $dry);
+
+// SecBank dashboards (logs-bank.* / bank-*, separate key). Run bin/setup-elastic.php once first.
+if (envv('ES_BANK_API_KEY')) {
+    $failed += BankExport::customers($cutoff, $dry);
+    $failed += BankExport::events($cutoff, $dry);
+}
 
 if ($dry) { echo "[export] dry run — nothing sent\n"; exit(0); }
 if ($failed > 0) { fwrite(STDERR, "[export] $failed docs failed — checkpoint NOT advanced, next run retries them\n"); exit(1); }
