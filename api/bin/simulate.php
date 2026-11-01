@@ -9,11 +9,12 @@
  *
  *   php bin/simulate.php --backfill=60 --run=s1        the hour ending now, S1 from 18 min before the end (17:28 of 17:46)
  *   php bin/simulate.php --backfill=60 --run=four      S9, S1, S10, S3 at the spec offsets
- *   php bin/simulate.php --backfill=60 --run=S6        any single scenario, started 15 min before the end
+ *   php bin/simulate.php --backfill=60 --run=S6        any single scenario, started 15 min before the end (S8: 50, so the memory trend shows)
  *   php bin/simulate.php --backfill=10080 --scale=0.1 --run=none   a week of quiet baseline for ML jobs
  *   php bin/simulate.php --live [--scale=0.1]          real time, minute by minute (systemd service)
  *   php bin/simulate.php --start=S3 | --stop=S3        presenter keys: start/stop a fault in the live run
  *   php bin/simulate.php --list                        active faults
+ *   php bin/simulate.php --ai-history=60               D9: 60 simulated scored investigations over the last 30 days
  * Options: --seed=N (default 1) --no-apm --dry-run
  *
  * Deterministic per (seed, minute): re-running a window writes nothing new (op_type create, fixed _ids).
@@ -24,7 +25,7 @@ if (is_file(__DIR__ . '/../.env')) \Dotenv\Dotenv::createImmutable(__DIR__ . '/.
 
 use Tensai\{Es, Simulator, BankExport};
 
-$o = getopt('', ['backfill:', 'live', 'run:', 'start:', 'stop:', 'list', 'scale:', 'seed:', 'no-apm', 'dry-run']);
+$o = getopt('', ['backfill:', 'live', 'run:', 'start:', 'stop:', 'list', 'scale:', 'seed:', 'no-apm', 'dry-run', 'ai-history:']);
 $state = __DIR__ . '/../var/sim-faults.json';
 $dry = isset($o['dry-run']);
 $seed = (int) ($o['seed'] ?? 1);
@@ -63,6 +64,14 @@ function scenarioDeploys(array $timeline): array
         if ($f['id'] === 'S4') $d[] = [$f['start'], 'web-ui', '7.5.0'];
     }
     return $d;
+}
+
+// ---- D9 history ----
+if (isset($o['ai-history'])) {
+    $rows = Simulator::aiHistory(max(1, (int) $o['ai-history']), time(), $seed);
+    $f = $dry ? 0 : Es::bulk(BankExport::AI_SCORES, $rows, false, 'ES_BANK_API_KEY');
+    echo '[sim] ' . count($rows) . ' simulated scored investigations -> ' . BankExport::AI_SCORES . ($f ? " ($f FAILED)" : '') . "\n";
+    exit($f ? 1 : 0);
 }
 
 // ---- presenter keys ----
@@ -150,7 +159,7 @@ if (isset($o['backfill'])) {
     $mins = max(1, (int) $o['backfill']);
     $end = intdiv(time(), 60) * 60;
     $run = (string) ($o['run'] ?? 'none');
-    $offsets = Simulator::RUNS[strtolower($run)] ?? (isset(Simulator::SCENARIOS[strtoupper($run)]) ? [strtoupper($run) => 15] : null);
+    $offsets = Simulator::RUNS[strtolower($run)] ?? (isset(Simulator::SCENARIOS[strtoupper($run)]) ? [strtoupper($run) => strtoupper($run) === 'S8' ? 50 : 15] : null);
     if ($offsets === null) { fwrite(STDERR, "unknown --run=$run (none, s1, four, S1..S10)\n"); exit(1); }
     $timeline = [];
     foreach ($offsets as $id => $m) $timeline[] = ['id' => $id, 'start' => $end - $m * 60, 'end' => null];
@@ -172,6 +181,7 @@ if (isset($o['backfill'])) {
         if (($t - $end) % 600 === 0) printf("  %s %s\n", date('H:i', $t), json_encode($counts));
     }
     printf("[sim] done: %s%s\n", json_encode($counts), $failed ? " ($failed FAILED)" : '');
+    printf("[sim] next: php bin/journey-health.php --minutes=%d --replay --at=%d   (frozen demo; omit --at if the live simulator continues)\n", $mins + 5, $end);
     exit($failed ? 1 : 0);
 }
 

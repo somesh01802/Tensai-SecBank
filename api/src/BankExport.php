@@ -122,6 +122,12 @@ final class BankExport
             'postgresql.query.time_ms' => 'double']],
     ];
     public const LEDGER = 'bank-demo-ledger';
+    /** D9: one document per scored investigation (agent's CAUSE line vs the ledger). */
+    public const AI_SCORES = 'bank-ai-scores';
+    private const AI_FIELDS = ['@timestamp' => 'date', 'run.id' => 'keyword', 'scenario.id' => 'keyword', 'agent.level' => 'keyword',
+        'cause.true' => 'keyword', 'cause.top1' => 'keyword', 'cause.top3' => 'keyword', 'score.top1_hit' => 'boolean', 'score.top3_hit' => 'boolean',
+        'score.time_to_hypothesis_s' => 'double', 'score.tool_calls' => 'integer', 'score.tokens' => 'long', 'score.approval_latency_s' => 'double',
+        'score.confidence' => 'double', 'labels.data_source' => 'keyword'];
     private const LEDGER_FIELDS = ['@timestamp' => 'date', 'scenario.id' => 'keyword', 'scenario.symptom' => 'keyword',
         'problem.id' => 'keyword', 'problem.severity' => 'keyword', 'cause.line' => 'keyword', 'cause.service' => 'keyword',
         'cause.component' => 'keyword', 'cause.type' => 'keyword', 'started_at' => 'date', 'ended_at' => 'date', 'labels.data_source' => 'keyword'];
@@ -157,6 +163,8 @@ final class BankExport
             ['number_of_shards' => 1]);
         // Ground truth for scoring. Presenter and agent roles must not be granted read on it.
         self::ensureIndex(self::LEDGER, ['dynamic' => false, 'properties' => self::props(self::LEDGER_FIELDS)], ['number_of_shards' => 1]);
+        foreach (Problems::mappings() + [self::AI_SCORES => self::AI_FIELDS] as $index => $fields)
+            self::ensureIndex($index, ['dynamic' => false, 'properties' => self::props($fields)], ['number_of_shards' => 1]);
         self::seedLookups();
     }
 
@@ -267,10 +275,12 @@ final class BankExport
         return $f;
     }
 
-    /** Journey health index per journey, per minute, per data source and synthetic flag. Recomputes the last $minutes. */
-    public static function health(int $minutes = 5): int
+    /** Journey health index per journey, per minute, per data source and synthetic flag. Recomputes the $minutes before $now. */
+    public static function health(int $minutes = 5, ?int $now = null): int
     {
-        $from = "DATE_TRUNC(1 minute, NOW() - $minutes minutes)";
+        $now = intdiv($now ?? time(), 60) * 60 + 60;   // include the current (partial) minute
+        $from = 'TO_DATETIME("' . gmdate('Y-m-d\TH:i:s', $now - ($minutes + 1) * 60) . '.000Z") AND @timestamp < TO_DATETIME("'
+            . gmdate('Y-m-d\TH:i:s', $now) . '.000Z")';
         // Apdex T = half the journey's p95 target (bill pay: 10 s, as on D0); tolerating up to 4T. Pending counts as lost.
         $rows = Es::esql('FROM ' . self::STREAM . "
             | WHERE @timestamp >= $from AND event.category == \"journey\" AND journey.status IN (\"completed\", \"failed\", \"abandoned\", \"pending\")

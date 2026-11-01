@@ -474,7 +474,7 @@ final class Simulator
                 foreach (['a1', 'b2', 'c3'] as $p) {
                     $pod = $svc . '-' . substr(md5($svc), 0, 6) . '-' . $p;
                     $mem = 0.45 + 0.03 * self::gauss();
-                    if ($svc === 'notify-svc' && ($x = $this->on('S8', $t)) !== null) $mem = min(1.0, 0.55 + 0.45 * $x / 360);   // limit in ~6 h
+                    if ($svc === 'notify-svc' && ($x = $this->on('S8', $t)) !== null) $mem = min(1.0, 0.45 + 0.55 * $x / 360);   // grows from baseline, limit in ~6 h
                     $doc = $k + ['metricset' => ['name' => 'pod'], 'service' => ['name' => $svc],
                         'kubernetes' => ['namespace' => 'secbank', 'node' => ['name' => 'aks-secbank-' . (crc32($pod) % self::NODES)],
                             'pod' => ['name' => $pod, 'phase' => 'Running', 'restarts' => 0, 'cpu' => ['pct' => round(min(1, 0.2 + 0.25 * $load + ($svc === 'payments-svc' ? 0.5 * $s1 : 0) + 0.04 * self::gauss()), 3)],
@@ -536,6 +536,38 @@ final class Simulator
         $out = [];
         foreach ($this->timeline as $f)
             if ($f['start'] >= $t0 && $f['start'] < $t0 + 60) $out[] = ['ledger', $f['id'] . '-' . $f['start'], $f['start'], self::ledgerDoc($f)];
+        return $out;
+    }
+
+    /** Simulated top-1 accuracy per scenario for the L2 agent (L3 is 8 points better). Silent and indirect faults are harder. */
+    private const AI_ACCURACY = ['S1' => .90, 'S2' => .85, 'S3' => .80, 'S4' => .70, 'S5' => .65, 'S6' => .60, 'S7' => .95, 'S8' => .90, 'S9' => .45, 'S10' => .75];
+
+    /**
+     * D9 history: $n simulated scored investigations over the 30 days before $now (deterministic per seed).
+     * Rows are [_id, doc] for bank-ai-scores. A miss answers with another scenario's cause (the confusion matrix).
+     */
+    public static function aiHistory(int $n, int $now, int $seed = 1): array
+    {
+        mt_srand(crc32("ai|$seed"));
+        $ids = array_keys(self::SCENARIOS);
+        $out = [];
+        for ($i = 0; $i < $n; $i++) {
+            $s = $ids[$i % count($ids)];
+            $level = self::r() < 0.5 ? 'L2' : 'L3';
+            $true = self::SCENARIOS[$s][2];
+            $hit = self::r() < self::AI_ACCURACY[$s] + ($level === 'L3' ? 0.08 : 0);
+            $others = array_values(array_filter($ids, fn($x) => $x !== $s));
+            $wrong = self::SCENARIOS[$others[mt_rand(0, count($others) - 1)]][2];
+            $top3 = $hit ? [$true, $wrong] : (self::r() < 0.6 ? [$wrong, $true] : [$wrong]);
+            $t = $now - mt_rand(3600, 30 * 86400);
+            $out[] = ["ai-$seed-$i", ['@timestamp' => self::iso($t), 'run' => ['id' => sprintf('RUN-%04d', $i + 1)], 'scenario' => ['id' => $s],
+                'agent' => ['level' => $level], 'cause' => ['true' => "CAUSE: $true", 'top1' => 'CAUSE: ' . $top3[0], 'top3' => array_map(fn($c) => "CAUSE: $c", $top3)],
+                'score' => ['top1_hit' => $hit, 'top3_hit' => in_array($true, $top3, true),
+                    'time_to_hypothesis_s' => round(self::logn($level === 'L2' ? 95 : 160, 0.35)), 'tool_calls' => mt_rand($level === 'L2' ? 5 : 9, $level === 'L2' ? 12 : 22),
+                    'tokens' => (int) round(self::logn($level === 'L2' ? 28000 : 61000, 0.3), -2), 'approval_latency_s' => round(self::logn(240, 0.6)),
+                    'confidence' => round(min(0.98, max(0.3, ($hit ? 0.78 : 0.55) + 0.1 * self::gauss())), 2)],
+                'labels' => ['data_source' => 'simulator']]];
+        }
         return $out;
     }
 
