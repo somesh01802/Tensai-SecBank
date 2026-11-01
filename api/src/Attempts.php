@@ -86,9 +86,9 @@ final class Attempts
         return (float) ($_ENV['TRANSFER_LIMIT_PER_TXN'] ?? getenv('TRANSFER_LIMIT_PER_TXN') ?: 500000);
     }
 
-    private static function checkLimit(string $kind, $amount): void
+    public static function checkLimit(string $kind, $amount): void
     {
-        if ($kind === 'BILL' || !is_numeric($amount)) return;
+        if (!is_numeric($amount)) return;   // VAPT-26: bills are limited too
         $limit = self::transferLimit();
         if ((float) $amount > $limit)
             throw new ApiError('Transfer limit exceeded: the maximum is ' . number_format($limit, 2) . ' per transaction', 400,

@@ -115,8 +115,8 @@ export function SettingsPage() {
           onSubmit={(e) => {
             e.preventDefault()
             if (!currentPass || !newPass) return
-            if (newPass.length < 6) {
-              toast.error("New password must be at least 6 characters")
+            if (newPass.length < 12) {
+              toast.error("New password must be at least 12 characters")
               return
             }
             passMutation.mutate({ currentPassword: currentPass, newPassword: newPass })
@@ -155,7 +155,7 @@ export function SettingsPage() {
                 value={newPass}
                 onChange={(e) => setNewPass(e.target.value)}
                 required
-                minLength={6}
+                minLength={12}
               />
             </div>
           </div>

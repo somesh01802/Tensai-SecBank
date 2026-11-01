@@ -14,8 +14,8 @@ throughout — no `DROP`, no destructive migration.
 - OpenTelemetry removed from the go-forward stack: the PHP backend has none;
   the seeder (`api/bin/seed-test-data.php`) is OTEL-free. Observability is
   Elastic RUM (browser) + Elastic APM PHP agent (server `php.ini`).
-- The Node backend (`backend/`) is **retained untouched** as the rollback
-  target until the cutover is confirmed.
+- The Node backend (`backend/`) was retained as the rollback target until the
+  cutover; it is removed in Upgrade 0010 (VAPT-28) and stays in git history.
 
 ## Compatibility guarantees (validated locally)
 
@@ -288,3 +288,57 @@ Check `connect-src` against the RUM server URL in `frontend/.env` before enablin
 data, the app keeps working). Verify: `php api/tests/security.php --base=<staging URL> --allow-writes` on staging only.
 
 Rollback: revert the code, then optionally `psql ... -f api/migrations/rollback/0009_security.down.sql`.
+
+# Upgrade 0010: remaining VAPT findings (2 November 2026)
+
+`0010_data_protection.sql` is additive (text-widened PAN/DOB/card-number columns, `users.totp_secret`,
+`users.totp_last_step`, tables `chatbot_messages`, `revoked_sessions`). Deploy together with 0008/0009.
+
+Behaviour changes:
+- Every payment, transfer, new payee/beneficiary, autopay, email change and card reveal asks for the MPIN (shared
+  prompt in the app). Customers without an MPIN are asked to set one first.
+- **Everyone signs in again once** (old tokens are refused). Sessions end after 30 idle minutes or 12 hours; logout
+  ends the session on the server. The browser no longer stores the token (HttpOnly, SameSite=Strict cookie only).
+- New passwords: 12-72 characters, common passwords refused. Existing passwords keep working.
+- **Admins need an authenticator code** (TOTP). Enrol each admin before the upgrade goes live (below), or they are
+  locked out of the admin console until enrolled.
+- Card numbers, tax PAN and date of birth are encrypted at rest; stored CVVs are deleted (the reveal derives them).
+- Bill payments are subject to `TRANSFER_LIMIT_PER_TXN`; chat history lives on the server (1 day).
+- The legacy Node backend (`backend/`) is removed from the repository. `git pull` deletes its tracked files on the
+  server; untracked files there (`backend/.env`, `node_modules`, `.pg-data`) are left alone. Restore with
+  `git checkout 74838fa -- backend` if ever needed.
+
+## Required environment (api/.env)
+| Variable | Value |
+|---|---|
+| `APP_DATA_KEY` | base64 of 32 random bytes: `php -r 'echo base64_encode(random_bytes(32)), PHP_EOL;'`. **Back it up outside the server** (password manager / vault): without it the encrypted card numbers, PANs and admin TOTP secrets cannot be read. Never in git or chat. |
+
+## Deploy (after the 0008/0009 steps above, in the same window)
+```bash
+cd /var/www/tensai-secbank/api
+sudo grep -c '^APP_DATA_KEY=' .env                                   # must print 1 (add the key first)
+sudo php bin/migrate.php                                             # applies 0010 (re-running is safe)
+sudo -u www-data php bin/protect-data.php --dry-run                  # counts only
+sudo -u www-data php bin/protect-data.php                            # encrypts in place, round-trip checked; re-run = no-op
+sudo -u www-data php bin/create-admin.php --email=<admin email> --enroll-mfa   # per admin: scan the otpauth URI, then clear the terminal
+node --version                                                       # Vite 7 needs 20.19+ or 22.12+
+cd .. && sudo env "PATH=$PATH" npm ci && sudo env "PATH=$PATH" npm --workspace frontend run build
+sudo systemctl restart php8.1-fpm
+sudo cp deploy/tensai-simulator.service deploy/tensai-traffic@.service /etc/systemd/system/ && sudo systemctl daemon-reload
+sudo systemctl restart tensai-simulator 'tensai-traffic@*'
+systemd-analyze security tensai-simulator tensai-traffic@1 | tail -2      # exposure should drop compared with before
+```
+
+## Verify
+- Sign in (customer): pay a bill, the MPIN prompt appears; reveal a card, the MPIN prompt appears.
+- Admin sign-in asks for the authenticator code.
+- `sudo -u postgres psql -p 5433 tensai -c "SELECT count(*) FILTER (WHERE full_number LIKE 'enc:v1:%') AS enc, count(*) FILTER (WHERE cvv IS NOT NULL) AS cvv, count(*) FROM cards"` → enc = total, cvv = 0.
+- `journalctl -u 'tensai-traffic@*' -n 20 --no-pager`: attempts keep succeeding (synthetic users set their MPIN).
+
+## Rollback
+```bash
+cd /var/www/tensai-secbank/api
+sudo -u www-data php bin/protect-data.php --decrypt                  # needs the same APP_DATA_KEY; CVVs stay deleted
+sudo git checkout --detach 8329031 && sudo systemctl restart php8.1-fpm   # 0009 release; then rebuild the frontend
+# Only if the schema must go: psql ... -f api/migrations/rollback/0010_data_protection.down.sql
+```

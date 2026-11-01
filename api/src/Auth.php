@@ -19,15 +19,23 @@ class Auth
 
     public function __invoke(Request $req, Handler $handler): Response
     {
-        $token = self::bearer($req) ?? ($req->getCookieParams()['token'] ?? null);
+        $bearer = self::bearer($req);
+        $token = $bearer ?? ($req->getCookieParams()['token'] ?? null);
         if (!$token) return self::unauth('Unauthorized: token is missing');
 
-        // Revoked (logged-out) tokens are rejected.
-        $revoked = Db::one('SELECT token FROM revoked_tokens WHERE token = :t', [':t' => $token]);
-        if ($revoked) return self::unauth('Unauthorized: token is revoked');
+        // CSRF (VAPT-12): the browser authenticates with the cookie, so a state-changing request must also carry a
+        // custom header that another origin cannot send without passing the CORS allow-list.
+        if ($bearer === null && !in_array($req->getMethod(), ['GET', 'HEAD', 'OPTIONS'], true) && $req->getHeaderLine('X-Tensai-Client') === '')
+            return Http::json(new SlimResponse(), ['message' => 'Forbidden: missing client header'], 403);
 
-        $userId = Token::verify($token);
-        if (!$userId) return self::unauth('Unauthorized: token is invalid');
+        $claims = Token::claims($token);
+        if (!$claims) return self::unauth('Unauthorized: token is invalid');
+        $userId = $claims['userId'];
+
+        // Revoked (logged-out) tokens and sessions are rejected.
+        $revoked = Db::one('SELECT 1 FROM revoked_tokens WHERE token = :t UNION ALL SELECT 1 FROM revoked_sessions WHERE sid = :s',
+            [':t' => $token, ':s' => $claims['sid']]);
+        if ($revoked) return self::unauth('Unauthorized: session ended');
 
         $user = Db::one(
             'SELECT id, email, name, mobile_number, is_system_user, role, is_synthetic,
@@ -38,7 +46,7 @@ class Auth
         if (!$user) return self::unauth('Unauthorized: user not found');
         // VAPT-09: a password or MPIN change ends every older session except the one that made the change.
         if ($user['validAfter'] !== null && Token::issuedAtMs($token) <= (int) $user['validAfter']
-            && !hash_equals((string) $user['sessionKeepHash'], hash('sha256', $token)))
+            && !hash_equals((string) $user['sessionKeepHash'], hash('sha256', $claims['sid'])))
             return self::unauth('Unauthorized: session ended after a credential change');
         unset($user['validAfter'], $user['sessionKeepHash']);
 
@@ -58,8 +66,26 @@ class Auth
         Apm::correlate($req, $user);
         Journey::$user = $user;
 
-        $req = $req->withAttribute('user', $user)->withAttribute('token', $token);
-        return $handler->handle($req);
+        $req = $req->withAttribute('user', $user)->withAttribute('token', $token)->withAttribute('sid', $claims['sid']);
+        $res = $handler->handle($req);
+
+        // Sliding session (VAPT-09): an active session gets a fresh 30-minute token every few minutes, as the cookie
+        // for the browser and in X-Session-Token for API clients; idle sessions simply expire.
+        if (time() - (int) $claims['iat'] >= Token::RENEW_AFTER && $res->getStatusCode() < 400) {
+            $fresh = Token::sign($userId, $claims['sid'], (int) $claims['sst']);
+            $res = $res->withHeader('X-Session-Token', $fresh);
+            if ($bearer === null) $res = $res->withAddedHeader('Set-Cookie', self::cookie($req, $fresh));
+        }
+        return $res;
+    }
+
+    /** The session cookie: HttpOnly, SameSite=Strict, Secure whenever the request arrived over HTTPS (VAPT-12/17). */
+    public static function cookie(Request $req, string $token): string
+    {
+        $sp = $req->getServerParams();
+        $https = $req->getUri()->getScheme() === 'https' || strtolower((string) ($sp['HTTPS'] ?? '')) === 'on'
+            || strtolower($req->getHeaderLine('X-Forwarded-Proto')) === 'https';
+        return "token=$token; Path=/; HttpOnly; SameSite=Strict; Max-Age=" . Token::ttlSeconds() . ($https ? '; Secure' : '');
     }
 
     public static function bearer(Request $req): ?string
@@ -74,10 +100,10 @@ class Auth
     }
 
     /** End all other sessions of a user (VAPT-09); the token used for this request keeps working. */
-    public static function endOtherSessions(string $userId, ?string $currentToken): void
+    public static function endOtherSessions(string $userId, ?string $currentSid): void
     {
         Db::run("UPDATE users SET sessions_valid_after = clock_timestamp(), session_keep_hash = :h WHERE id = :u",
-            [':h' => $currentToken ? hash('sha256', $currentToken) : null, ':u' => $userId]);
+            [':h' => $currentSid ? hash('sha256', $currentSid) : null, ':u' => $userId]);
     }
 
     private static function unauth(string $msg): Response

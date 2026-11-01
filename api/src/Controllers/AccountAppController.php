@@ -35,11 +35,13 @@ class AccountAppController
         $application = Db::one(
             'INSERT INTO account_applications (user_id, kind, applicant_name, pan, pin_code, occupation, mobile_number, extra, status, account_id, processed_at)
              VALUES (:u,:k,:an,:pan,:pin,:occ,:mob,:ex,\'APPROVED\',:acc, now()) RETURNING *',
-            [':u' => $u['id'], ':k' => $kind, ':an' => $name, ':pan' => $pan, ':pin' => $pin, ':occ' => $occ,
+            // VAPT-20: tax id encrypted at rest.
+            [':u' => $u['id'], ':k' => $kind, ':an' => $name, ':pan' => \Tensai\Crypto::encrypt($pan), ':pin' => $pin, ':occ' => $occ,
              ':mob' => $mobile, ':ex' => json_encode((object) $extra), ':acc' => $account['id']]
         );
-        Db::run('UPDATE users SET pan=:p, pin_code=:pc, occupation=:o, mobile_number=:m WHERE id=:u',
-            [':p' => $pan, ':pc' => $pin, ':o' => $occ, ':m' => $mobile, ':u' => $u['id']]);
+        // The sign-in mobile number is not replaced by an application form (unverified change of a login identifier).
+        Db::run('UPDATE users SET pan=:p, pin_code=:pc, occupation=:o WHERE id=:u',
+            [':p' => \Tensai\Crypto::encrypt($pan), ':pc' => $pin, ':o' => $occ, ':u' => $u['id']]);
 
         Rewards::award($u['id'], 'account.opened.any');
         Rewards::award($u['id'], "account.opened.$kind");
@@ -48,6 +50,7 @@ class AccountAppController
         if (count($all) >= 2) Rewards::award($u['id'], 'account.count.gte.2');
         if (count($all) >= 3) Rewards::award($u['id'], 'account.count.gte.3');
 
+        $application['pan'] = \Tensai\Crypto::maskTaxId($application['pan']);
         return Http::json($res, ['application' => $application, 'account' => $account], 201);
     }
 
@@ -55,6 +58,6 @@ class AccountAppController
     {
         $u = $req->getAttribute('user');
         $rows = Db::all('SELECT * FROM account_applications WHERE user_id = :u', [':u' => $u['id']]);
-        return Http::json($res, ['applications' => $rows]);
+        return Http::json($res, ['applications' => array_map(fn($r) => ['pan' => \Tensai\Crypto::maskTaxId($r['pan'] ?? null)] + $r, $rows)]);
     }
 }

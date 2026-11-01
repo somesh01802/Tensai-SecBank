@@ -29,6 +29,7 @@ class PayeeController
         if (!in_array($bank, Banks::LIST, true)) throw new ApiError('Unknown bank', 400);
         if ($acc !== $conf) throw new ApiError('Account numbers do not match', 400);
         if (!preg_match('/^\d{9,18}$/', $acc)) throw new ApiError('Account number must be 9–18 digits', 400);
+        \Tensai\Mpin::stepUp($req, $u);   // VAPT-05: adding a payee enables transfers to it
 
         try {
             $row = Db::one(

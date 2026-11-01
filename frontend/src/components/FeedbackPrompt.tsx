@@ -24,7 +24,7 @@ const OPTIONS: { rating: FeedbackRating; label: string; Icon: typeof Smile; tone
 export function FeedbackPrompt() {
   const offer = useFeedbackStore((s) => s.current)
   const close = useFeedbackStore((s) => s.close)
-  const token = useAuthStore((s) => s.token)
+  const signedIn = useAuthStore((s) => s.signedIn)
   const locationPending = useAuthStore((s) => s.pendingLocationEventId !== null)
   const [rating, setRating] = useState<FeedbackRating | null>(null)
   const [comment, setComment] = useState("")
@@ -32,7 +32,7 @@ export function FeedbackPrompt() {
 
   useEffect(() => { setRating(null); setComment(""); setBusy(false) }, [offer?.attemptId])
 
-  if (!offer || !token || locationPending) return null // waits for the location prompt (same corner)
+  if (!offer || !signedIn || locationPending) return null // waits for the location prompt (same corner)
 
   async function send(dismissed: boolean) {
     if (!offer) return

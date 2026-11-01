@@ -28,6 +28,7 @@ class AutopayController
             || !Db::one('SELECT 1 FROM investments WHERE id = :i AND user_id = :u', [':i' => $b['investmentId'], ':u' => $u['id']]))
             throw new ApiError('Investment not found', 404);
         \Tensai\Ledger::amount($b['amount']);
+        \Tensai\Mpin::stepUp($req, $u);   // VAPT-05: recurring debit
         $row = Db::one(
             'INSERT INTO investment_autopay (user_id, investment_id, source_account_id, amount, frequency, next_run_at, enabled)
              VALUES (:u,:inv,:src,:amt,:f,:nr,true) RETURNING *',

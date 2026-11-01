@@ -3,8 +3,12 @@
 Full-stack banking app with a PostgreSQL-backed double-entry ledger, idempotent
 transfers, beneficiaries, profile settings, and an ICICI-style public marketing site.
 
-- **backend/** — Node.js + Express + Drizzle ORM + PostgreSQL (via PGlite in dev)
+- **api/** — PHP 8.1 + Slim 4 + PostgreSQL (see `api/README.md` and `MIGRATION.md`)
 - **frontend/** — Vite + React 18 + TypeScript + Tailwind + React Query + Recharts
+
+> The legacy Node backend (`backend/`) was removed in upgrade 0010 (VAPT-28: unmaintained code with
+> vulnerable dependencies). Sections below that mention `backend/` are historical; the code is in git
+> history (`git show 74838fa:backend/...`). `api/` is the only backend.
 
 ## Quick start
 

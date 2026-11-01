@@ -37,8 +37,8 @@ export function RegisterPage() {
       toast.error("Mobile number must be exactly 10 digits")
       return
     }
-    if (password.length < 6) {
-      toast.error("Password must be at least 6 characters")
+    if (password.length < 12) {
+      toast.error("Password must be at least 12 characters")
       return
     }
     mutation.mutate({ name, email, password, mobileNumber } as any)
@@ -85,7 +85,7 @@ export function RegisterPage() {
         <div>
           <label className="label" htmlFor="password">Password</label>
           <div className="relative">
-            <input id="password" type={showPass ? "text" : "password"} className="input pr-11" placeholder="At least 6 characters" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
+            <input id="password" type={showPass ? "text" : "password"} className="input pr-11" placeholder="At least 12 characters" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={12} />
             <button type="button" onClick={() => setShowPass((v) => !v)} className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">
               {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>

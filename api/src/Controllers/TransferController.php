@@ -27,6 +27,7 @@ class TransferController
         $holder = $b['accountHolderName'] ?? null; $amount = $b['amount'] ?? null; $remarks = $b['remarks'] ?? null;
         $src = $b['sourceAccountId'] ?? null; $key = $b['idempotencyKey'] ?? null; $savePayee = !empty($b['savePayee']);
 
+        \Tensai\Mpin::stepUp($req, $u);   // VAPT-05
         $meta = ['amount' => $amount, 'category' => 'TRANSFER_EXTERNAL', 'sourceAccountId' => $src, 'idempotencyKey' => $key,
                  'target' => trim(($bank ?? '') . ' ' . Attempts::mask(is_string($acc) ? $acc : null))];
         return Attempts::run($req, $res, $u, 'EXTERNAL', $meta,
@@ -80,6 +81,7 @@ class TransferController
         if (!$payeeId || !$src || !$amount || !$nextRunAt) throw new ApiError('payeeId, sourceAccountId, amount, nextRunAt required', 400);
         // VAPT-03: source account and payee must be the caller's own.
         if (!Ledger::ownedActive($src, $u['id'])) throw new ApiError('Source account not found', 404);
+        \Tensai\Mpin::stepUp($req, $u);   // VAPT-05: a standing order moves money later
         if (!Attempts::isUuid($payeeId) || !Db::one('SELECT 1 FROM payees WHERE id = :p AND user_id = :u', [':p' => $payeeId, ':u' => $u['id']]))
             throw new ApiError('Payee not found', 404);
         Ledger::amount($amount);

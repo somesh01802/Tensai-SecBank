@@ -24,11 +24,14 @@ class CardController
         $holder = trim($b['holderName'] ?? $u['name'] ?? 'Card Holder');
         $type = $b['type'] ?? 'CREDIT'; $brand = $b['brand'] ?? 'MASTERCARD';
         $full = '5' . self::digits(15);
+        // The card may only be linked to one of the caller's own accounts.
+        if (!empty($b['accountId']) && !\Tensai\Ledger::ownedActive($b['accountId'], $u['id'])) throw new ApiError('Account not found', 404);
         $row = Db::one(
             'INSERT INTO cards (user_id, account_id, holder_name, last_four, full_number, cvv, expiry_month, expiry_year, type, brand, color_hint, network)
              VALUES (:u,:acc,:h,:l4,:fn,:cvv,:em,:ey,:t,:br,:col,:net) RETURNING *',
+            // VAPT-06: card number encrypted at rest; no CVV stored (derived on reveal).
             [':u' => $u['id'], ':acc' => $b['accountId'] ?? null, ':h' => $holder, ':l4' => substr($full, -4),
-             ':fn' => $full, ':cvv' => self::digits(3), ':em' => random_int(1, 12), ':ey' => ((int) date('Y') + 3) % 100,
+             ':fn' => \Tensai\Crypto::encrypt($full), ':cvv' => null, ':em' => random_int(1, 12), ':ey' => ((int) date('Y') + 3) % 100,
              ':t' => $type, ':br' => $brand, ':col' => $b['colorHint'] ?? 'peach', ':net' => $brand]
         );
         return Http::json($res, ['card' => self::mask($row)], 201);
@@ -51,6 +54,7 @@ class CardController
         $b = (array) $req->getParsedBody();
         $merchant = substr(trim(preg_replace('/[\x00-\x1F\x7F]+/u', ' ', (string) ($b['merchant'] ?? 'Merchant'))), 0, 80) ?: 'Merchant';
         $key = isset($b['idempotencyKey']) ? substr((string) $b['idempotencyKey'], 0, 200) : 'card-pay-' . bin2hex(random_bytes(12));
+        \Tensai\Mpin::stepUp($req, $u);   // VAPT-05
         return Attempts::run($req, $res, $u, 'CARD',
             ['amount' => $b['amount'] ?? null, 'category' => 'CARD_PAYMENT', 'target' => $merchant, 'idempotencyKey' => $key],
             function (array &$meta) use ($u, $b, $args, $merchant, $key) {

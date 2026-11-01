@@ -34,6 +34,7 @@
 define('STOP_FILE', getenv('TRAFFIC_STOP_FILE') ?: sys_get_temp_dir() . '/tensai-traffic.stop');
 const STOPPED_EXIT = 75; // systemd unit: RestartPreventExitStatus=75
 const PASSWORD = 'LoadTest-2026!';
+const MPIN = '583914';   // synthetic users only; money calls need MPIN step-up (VAPT-05)
 const REAL_FAILURES = ['insufficient_funds', 'invalid_beneficiary', 'transfer_limit'];
 const INJECTED_FAILURES = ['processor_timeout', 'network_failure', 'fraud_timeout', 'db_concurrency', 'service_outage'];
 
@@ -142,6 +143,7 @@ function login(array &$u): bool
         return false;
     }
     $u['token'] = $j['token'] ?? null;
+    if ($u['token'] && empty($j['hasMpin'])) call('POST', '/auth/mpin', ['mpin' => MPIN], $u['token']);
     // A script has no browser geolocation: report that honestly — never invent coordinates.
     if ($u['token'] && !empty($j['loginEventId']))
         call('POST', '/auth/location', ['loginEventId' => $j['loginEventId'], 'status' => 'unavailable'], $u['token']);
@@ -190,7 +192,8 @@ function journey(int $i): void
     $u = &$POOL[$i];
     $t = $u['token'];
 
-    call('GET', '/auth/me', null, $t);
+    // Sessions expire after 30 idle minutes (VAPT-09): sign in again on the next turn.
+    if (call('GET', '/auth/me', null, $t)[0] === 401) { $u['token'] = null; return; }
     [, $d] = call('GET', '/accounts', null, $t);
     $balance = 0.0;
     foreach ($d['accounts'] ?? [] as $a) if (!empty($a['isPrimary'])) { $u['accountId'] = $a['id']; $balance = (float) ($a['balance'] ?? 0); }
@@ -208,13 +211,12 @@ function journey(int $i): void
     if ($mode === 'insufficient_funds') $amount = min($LIMIT, $balance + mt_rand(1, 5000));
     if ($mode === 'transfer_limit') $amount = $LIMIT + mt_rand(1, 100000);
     $kind = weighted(['P2P' => 5, 'EXTERNAL' => 3, 'BILL' => 2]);
-    if ($mode === 'transfer_limit' && $kind === 'BILL') $kind = 'P2P'; // limits apply to transfers
 
     if ($kind === 'P2P') {
         $peer = $POOL[array_rand($POOL)];
         if (empty($peer['accountId']) || $peer['accountId'] === $src) return;
         $body = ['fromAccount' => $src, 'toAccount' => $mode === 'invalid_beneficiary' ? uuid() : $peer['accountId'],
-            'amount' => $amount, 'idempotencyKey' => uuid(), 'description' => 'P2P to ' . $peer['name']];
+            'amount' => $amount, 'idempotencyKey' => uuid(), 'description' => 'P2P to ' . $peer['name'], 'mpin' => MPIN];
         [$c, $j] = call('POST', '/transactions', $body, $t, $headers);
         settle($u, $c, $j, $mode);
         if ($c === 201 && chance(0.05)) { // network-retry with the SAME key must not double-post
@@ -229,7 +231,7 @@ function journey(int $i): void
             'bankName' => pick($banks), 'accountNumber' => $acct,
             'confirmAccountNumber' => $mode === 'invalid_beneficiary' ? strrev($acct) . '1' : $acct,
             'accountHolderName' => personName(uuid()), 'amount' => $amount, 'remarks' => 'Payment',
-            'sourceAccountId' => $src, 'idempotencyKey' => uuid(),
+            'sourceAccountId' => $src, 'idempotencyKey' => uuid(), 'mpin' => MPIN,
         ], $t, $headers);
         settle($u, $c, $j, $mode);
     } else { // BILL
@@ -240,7 +242,7 @@ function journey(int $i): void
             'dueDate' => date('Y-m-d', strtotime('+' . mt_rand(1, 20) . ' days'))], $t);
         if ($c !== 201 || empty($j['bill']['id'])) return;
         $billId = $mode === 'invalid_beneficiary' ? uuid() : $j['bill']['id'];
-        [$c, $j] = call('POST', "/bills/$billId/pay", ['fromAccountId' => $src], $t, $headers);
+        [$c, $j] = call('POST', "/bills/$billId/pay", ['fromAccountId' => $src, 'mpin' => MPIN], $t, $headers);
         settle($u, $c, $j, $mode);
     }
 }

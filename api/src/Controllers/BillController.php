@@ -33,6 +33,7 @@ class BillController
     {
         $u = $req->getAttribute('user');
         $from = ((array) $req->getParsedBody())['fromAccountId'] ?? null;
+        \Tensai\Mpin::stepUp($req, $u);   // VAPT-05
         return Attempts::run($req, $res, $u, 'BILL', ['sourceAccountId' => $from],
             function (array &$meta) use ($u, $from, $args) {
                 $bill = Attempts::isUuid($args['id'] ?? null)
@@ -40,6 +41,7 @@ class BillController
                     : null;
                 if (!$bill) throw new ApiError('Bill not found', 404);
                 $meta += ['amount' => $bill['amount'], 'category' => $bill['category'], 'target' => $bill['billerName']];
+                if ($bill['status'] !== 'PAID') Attempts::checkLimit('BILL', $bill['amount']);   // VAPT-26
                 if ($bill['status'] === 'PAID') return [['message' => 'Bill already paid', 'bill' => $bill], 200, $bill['paidTxId'] ?? null];
                 // VAPT-19: a bill is only PAID when money actually moves.
                 if (!$from) throw new ApiError('Choose the account to pay from', 400);

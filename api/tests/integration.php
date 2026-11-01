@@ -13,6 +13,7 @@
 require __DIR__ . '/../vendor/autoload.php';
 if (is_file(__DIR__ . '/../.env')) \Dotenv\Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
 
+require __DIR__ . '/mpin.php';
 use Tensai\Db;
 
 $o = getopt('', ['base::', 'allow-writes']);
@@ -40,6 +41,7 @@ function uuid(): string
 function req(string $method, string $path, ?array $body = null, ?string $token = null, array $headers = []): array
 {
     global $BASE;
+    $body = withMpin($method, $path, $body);
     $h = array_merge(['Accept: application/json'], $headers);
     if ($body !== null) $h[] = 'Content-Type: application/json';
     if ($token) $h[] = "Authorization: Bearer $token";
@@ -57,6 +59,7 @@ function register(string $email, string $name, array $extra = []): array
     $mobile = '5' . str_pad((string) random_int(0, 999999999), 9, '0', STR_PAD_LEFT);
     [$c, $j] = req('POST', '/auth/register', ['name' => $name, 'email' => $email, 'password' => 'Test-Pass-123', 'mobileNumber' => $mobile] + $extra);
     if ($c !== 201) { fwrite(STDERR, "register $email failed: $c " . json_encode($j) . "\n"); exit(1); }
+    req('POST', '/auth/mpin', ['mpin' => TEST_MPIN], $j['token']);
     return ['email' => $email, 'id' => $j['user']['id'], 'token' => $j['token'], 'reg' => $j];
 }
 
@@ -99,14 +102,25 @@ putenv("ADMIN_PASSWORD=$adminPass");
 exec($cmd . ' 2>&1', $out, $rc);
 putenv('ADMIN_PASSWORD');
 check('bin/create-admin.php provisions an admin', $rc === 0, implode(' ', $out));
+preg_match('/secret=([A-Z2-7]+)/', implode(' ', $out), $m);
+$totp = $m[1] ?? '';
+check('new admin is enrolled in MFA (otpauth URI printed once)', $totp !== '');
+$otp = fn(int $skew = 0) => \Tensai\Totp::code($totp, intdiv(time(), 30) + $skew);
 
 [$c, $j] = req('POST', '/auth/login', ['email' => $r1['email'], 'password' => 'Test-Pass-123', 'loginAs' => 'admin']);
 check('customer cannot sign in through the Admin option (403)', $c === 403, "$c");
 [$c] = req('POST', '/auth/login', ['email' => $adminEmail, 'password' => $adminPass]);
 check('admin cannot sign in through the Customer option (403)', $c === 403, "$c");
-[$c, $j] = req('POST', '/auth/login', ['email' => $adminEmail, 'password' => $adminPass, 'loginAs' => 'admin']);
-check('admin signs in through the Admin option', $c === 200 && ($j['user']['role'] ?? null) === 'ADMIN', "$c");
+[$c] = req('POST', '/auth/login', ['email' => $adminEmail, 'password' => $adminPass, 'loginAs' => 'admin']);
+check('admin sign-in without an authenticator code is refused (401)', $c === 401, "$c");
+[$c] = req('POST', '/auth/login', ['email' => $adminEmail, 'password' => $adminPass, 'loginAs' => 'admin', 'otp' => $otp(5)]);
+check('admin sign-in with a wrong authenticator code is refused (401)', $c === 401, "$c");
+[$c, $j] = req('POST', '/auth/login', ['email' => $adminEmail, 'password' => $adminPass, 'loginAs' => 'admin', 'otp' => $otp()]);
+check('admin signs in through the Admin option with password + code', $c === 200 && ($j['user']['role'] ?? null) === 'ADMIN', "$c");
 $adminToken = $j['token'] ?? '';
+[$c] = req('POST', '/auth/login', ['email' => $adminEmail, 'password' => $adminPass, 'loginAs' => 'admin', 'otp' => $otp()]);
+check('an authenticator code works only once (replay refused)', $c === 401, "$c");
+Db::run("DELETE FROM auth_failures WHERE identifier = :i", [':i' => $adminEmail]);
 [$c] = req('POST', '/auth/login', ['email' => $adminEmail, 'mpin' => '123456', 'loginAs' => 'admin']);
 check('admin sign-in rejects MPIN (password only)', $c === 400, "$c");
 
@@ -212,7 +226,7 @@ $r1Before = balance($r1);
 check('own bill payment succeeds and debits once', $c === 200 && abs(balance($r1) - ($r1Before - 25)) < 0.001 && !empty($paid['attemptId']), "$c");
 [$c] = req('POST', "/bills/$billId/pay", ['fromAccountId' => $a1['id']], $r1['token']);
 check('paying an already-paid bill does not debit again', $c === 200 && abs(balance($r1) - ($r1Before - 25)) < 0.001);
-[, $big] = req('POST', '/bills', ['billerName' => 'Huge Bill', 'category' => 'OTHER', 'amount' => 99999999], $r1['token']);
+[, $big] = req('POST', '/bills', ['billerName' => 'Huge Bill', 'category' => 'OTHER', 'amount' => round(balance($r1) + 1000, 2)], $r1['token']);   // above the balance, below the transfer limit
 [$c, $j] = req('POST', "/bills/{$big['bill']['id']}/pay", ['fromAccountId' => $a1['id']], $r1['token']);
 $st = Db::one('SELECT status FROM bills WHERE id = :i', [':i' => $big['bill']['id']]);
 check('bill larger than the balance is refused and stays DUE (previously went negative)', $c === 400

@@ -20,6 +20,11 @@ Restart=always
 RestartSec=10
 User=www-data
 Nice=10
+# Hardening (VAPT-29): no privilege gain, read-only /usr /boot /etc, no access to /home.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

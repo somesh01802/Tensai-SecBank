@@ -32,6 +32,7 @@ class RecurringBillController
         // VAPT-03: an autopay source account must be the caller's own.
         if (!empty($b['sourceAccountId']) && !\Tensai\Ledger::ownedActive($b['sourceAccountId'], $u['id']))
             throw new ApiError('Source account not found', 404);
+        if ($autopay && !empty($b['sourceAccountId'])) \Tensai\Mpin::stepUp($req, $u);   // VAPT-05: recurring debit
         $row = Db::one(
             'INSERT INTO recurring_bills (user_id, biller_name, category, provider_hint, amount, auto_detect_amount, frequency, source_account_id, autopay_enabled, next_run_at, enabled)
              VALUES (:u,:b,:c,:ph,:a,:ad,:f,:sa,:ap,:n,true) RETURNING *',

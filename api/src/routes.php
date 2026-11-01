@@ -153,7 +153,7 @@ return function (App $app): void {
         $g->get('/card-products', [$cardApp, 'listProducts'])->add($auth);
         $g->post('/card-applications', [$cardApp, 'apply'])->add($auth);
         $g->get('/card-applications', [$cardApp, 'listApplications'])->add($auth);
-        $g->get('/cards/{id}/reveal', [$cardApp, 'reveal'])->add($auth);
+        $g->post('/cards/{id}/reveal', [$cardApp, 'reveal'])->add($auth);   // POST: carries the step-up MPIN (VAPT-05/06)
 
         // ---- payees ----
         $g->get('/payees/banks', [$payee, 'banks'])->add($auth);

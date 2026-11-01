@@ -16,7 +16,7 @@ class ChatbotController
 
         $b = (array) $req->getParsedBody();
         try {
-            $out = Chatbot::ask($u['id'], $b['message'] ?? null, $b['history'] ?? []);
+            $out = Chatbot::ask($u['id'], isset($b['message']) && is_string($b['message']) ? $b['message'] : null);   // client history is ignored (VAPT-23)
             return Http::json($res, ['reply' => $out['text'], 'source' => $out['source']]);
         } catch (\Throwable $e) {
             error_log('[chatbot.ask] failed: ' . $e->getMessage());

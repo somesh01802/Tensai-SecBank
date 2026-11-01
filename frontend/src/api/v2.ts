@@ -128,7 +128,7 @@ export const cardProductsApi = {
   apply: async (payload: { productCode: string; mobileNumber: string; pan: string; dob: string }) =>
     (await api.post("/card-applications", payload)).data,
   reveal: async (cardId: string) =>
-    (await api.get<{ fullNumber: string; cvv: string; expiry: string }>(`/cards/${cardId}/reveal`)).data
+    (await api.post<{ fullNumber: string; cvv: string; expiry: string }>(`/cards/${cardId}/reveal`, {})).data // MPIN added by the client interceptor
 }
 
 /* --------------------------- Recurring Bills --------------------------- */

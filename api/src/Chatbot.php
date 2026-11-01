@@ -110,7 +110,7 @@ USER CONTEXT (sanitized snapshot from PostgreSQL — never fabricate figures)
 {{CONTEXT_JSON}}
 PROMPT;
 
-    public static function ask(string $userId, ?string $message, $history = []): array
+    public static function ask(string $userId, ?string $message): array
     {
         if (!$message || trim($message) === '')
             return ['text' => 'Ask me anything about your Tensai SecBank account.', 'source' => 'guard'];
@@ -121,12 +121,13 @@ PROMPT;
 
         if (!empty($_ENV['ANTHROPIC_API_KEY'] ?? getenv('ANTHROPIC_API_KEY'))) {
             try {
-                $messages = self::shapeHistory($history);
+                $messages = self::history($userId);
                 $messages[] = ['role' => 'user', 'content' => $message];
                 $system = str_replace('{{CONTEXT_JSON}}',
                     substr(json_encode($ctx, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), 0, 12000),
                     self::SYSTEM_PROMPT_TEMPLATE);
                 $out = self::callClaude($system, $messages);
+                self::remember($userId, $message, $out);
                 return ['text' => $out, 'source' => 'llm'];
             } catch (\Throwable $e) {
                 error_log('[chatbot] LLM call failed, falling back: ' . $e->getMessage());
@@ -142,18 +143,24 @@ PROMPT;
         ];
     }
 
-    private static function shapeHistory($history): array
+    /**
+     * Conversation memory lives on the server (VAPT-23): the client cannot forge earlier assistant turns.
+     * Only the last hour is used and anything older than a day is pruned.
+     */
+    private static function history(string $userId): array
     {
-        if (!is_array($history)) return [];
-        $trimmed = array_slice($history, -self::MAX_HISTORY);
-        $out = [];
-        foreach ($trimmed as $m) {
-            if (is_array($m) && isset($m['content']) && is_string($m['content'])
-                && in_array($m['role'] ?? '', ['user', 'assistant'], true)) {
-                $out[] = ['role' => $m['role'], 'content' => substr((string) $m['content'], 0, 4000)];
-            }
-        }
-        return $out;
+        $rows = Db::all("SELECT role, content FROM (SELECT role, content, created_at, id FROM chatbot_messages
+            WHERE user_id = :u AND created_at > now() - interval '1 hour' ORDER BY created_at DESC, id DESC LIMIT :n) t
+            ORDER BY created_at, id", [':u' => $userId, ':n' => self::MAX_HISTORY]);
+        while ($rows && $rows[0]['role'] !== 'user') array_shift($rows);   // the API expects a user turn first
+        return array_map(fn($r) => ['role' => $r['role'], 'content' => $r['content']], $rows);
+    }
+
+    private static function remember(string $userId, string $question, string $answer): void
+    {
+        Db::run("DELETE FROM chatbot_messages WHERE user_id = :u AND created_at < now() - interval '1 day'", [':u' => $userId]);
+        Db::run("INSERT INTO chatbot_messages (user_id, role, content, created_at) VALUES (:u, 'user', :q, clock_timestamp()), (:u, 'assistant', :a, clock_timestamp())",
+            [':u' => $userId, ':q' => $question, ':a' => substr($answer, 0, 4000)]);
     }
 
     private static function usd($v): string
@@ -164,7 +171,7 @@ PROMPT;
     /** Assemble a compact, secure user snapshot. Every field is safe to send to an LLM. */
     public static function buildUserContext(string $userId): array
     {
-        $user = Db::one('SELECT name, email, mobile_number, created_at FROM users WHERE id = :u LIMIT 1', [':u' => $userId]) ?: [];
+        $user = Db::one('SELECT name, created_at FROM users WHERE id = :u LIMIT 1', [':u' => $userId]) ?: [];
         $accounts = Db::all('SELECT * FROM accounts WHERE user_id = :u', [':u' => $userId]);
         $txs = Db::all('SELECT * FROM transactions ORDER BY created_at DESC LIMIT 10');
         $loans = Db::all('SELECT * FROM loan_applications WHERE user_id = :u', [':u' => $userId]);
@@ -244,8 +251,7 @@ PROMPT;
 
         return [
             'user' => [
-                'name' => $user['name'] ?? null, 'email' => $user['email'] ?? null,
-                'mobileMasked' => !empty($user['mobileNumber']) ? 'xxxxxx' . substr((string) $user['mobileNumber'], -4) : null,
+                'name' => $user['name'] ?? null,   // no email or mobile: the LLM never needs contact details (VAPT-23)
                 'memberSince' => $user['createdAt'] ?? null,
             ],
             'totals' => [

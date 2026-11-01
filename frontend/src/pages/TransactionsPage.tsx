@@ -10,7 +10,6 @@ import { TxStatusBadge } from "@/components/StatusBadge"
 import { formatCurrency, formatDate, shortId } from "@/lib/utils"
 import type { Transaction, TransactionStatus } from "@/types/api"
 import { cn } from "@/lib/utils"
-import { useAuthStore } from "@/stores/authStore"
 
 type StatusFilter = "ALL" | TransactionStatus | "IN" | "OUT"
 type RangeKey = "ALL" | "1D" | "1W" | "1M" | "CUSTOM"
@@ -32,7 +31,6 @@ export function TransactionsPage() {
   const [params] = useSearchParams()
   const highlightId = params.get("highlight")
   const initialQuery = params.get("q") ?? ""
-  const token = useAuthStore((s) => s.token)
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL")
   const [search, setSearch] = useState(initialQuery)
@@ -83,7 +81,7 @@ export function TransactionsPage() {
   async function downloadCsv() {
     try {
       const res = await fetch(transactionsApi.statementUrl({ from, to }), {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: { "X-Tensai-Client": "web" },
         credentials: "include"
       })
       if (!res.ok) {

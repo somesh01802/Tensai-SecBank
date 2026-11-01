@@ -124,10 +124,11 @@ function PinGrid({
           onKeyDown={(e) => {
             if (e.key === "Backspace" && !digits[i].trim() && i > 0) refs.current[i - 1]?.focus()
           }}
+          type="password"
           inputMode="numeric"
           maxLength={1}
           className="h-14 w-12 rounded-xl border border-slate-200 bg-white text-center text-2xl font-bold text-slate-900 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-          autoComplete="one-time-code"
+          autoComplete="off"
         />
       ))}
     </div>

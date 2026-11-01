@@ -2,6 +2,7 @@
 // Journey telemetry check (0008). Creates test users — local/staging only.
 //   php tests/journeys.php --base=http://127.0.0.1:8090 --allow-writes
 require __DIR__ . '/../src/bootstrap.php';
+require __DIR__ . '/mpin.php';
 use Tensai\Db;
 
 $opt = getopt('', ['base:', 'allow-writes']);
@@ -14,6 +15,7 @@ function check(string $name, bool $ok, string $detail = ''): void {
 }
 function call(string $m, string $path, ?array $body = null, ?string $tok = null, array $h = []): array {
     global $base;
+    $body = withMpin($m, $path, $body);
     $ch = curl_init($base . $path);
     $hdr = array_merge(['Content-Type: application/json', 'User-Agent: Mozilla/5.0 (Windows NT 10.0) Chrome/129.0 Safari/537.36'], $h);
     if ($tok) $hdr[] = "Authorization: Bearer $tok";
@@ -30,6 +32,7 @@ $email = "journey-$run@test.invalid";
 [$c, $reg] = call('POST', '/auth/register', ['name' => 'Journey Tester', 'email' => $email, 'password' => 'Journey-Pass-1', 'mobileNumber' => '5' . substr($run, -9)]);
 check('register 201', $c === 201, (string) $c);
 $tok = $reg['token'] ?? '';
+call('POST', '/auth/mpin', ['mpin' => TEST_MPIN], $tok);
 $uid = $reg['user']['id'] ?? '';
 $u = Db::one('SELECT segment, home_branch_id FROM users WHERE id = :u', [':u' => $uid]);
 check('new user gets segment + home branch at insert (trigger)', in_array($u['segment'] ?? null, ['retail', 'premier', 'sme'], true)
@@ -46,7 +49,7 @@ check('bad login -> failed / invalid_credentials / user', ($bad['status'] ?? '')
 // Bill pay: UI steps via /journey/step, then the server confirm step, same journey id.
 $accs = call('GET', '/accounts', null, $tok)[1]['accounts'] ?? [];
 $acc = $accs[0]['id'] ?? null;
-[, $bill] = call('POST', '/bills', ['billerName' => 'Journey Power', 'category' => 'ELECTRICITY', 'amount' => 10_000_000], $tok);
+[, $bill] = call('POST', '/bills', ['billerName' => 'Journey Power', 'category' => 'ELECTRICITY', 'amount' => 499_999], $tok);   // above a new account's balance, below the transfer limit
 $billId = $bill['bill']['id'] ?? '';
 $jid = uuid();
 foreach (['sign_in', 'choose_biller', 'enter_amount'] as $s)
@@ -58,7 +61,7 @@ $ev = events($jid);
 $last = end($ev);
 check('insufficient funds bill pay -> 4 steps, last failed/business', count($ev) === 4 && $last['step'] === 'confirm_payment'
     && $last['reasonCode'] === 'insufficient_funds' && $last['failureClass'] === 'business', json_encode(array_column($ev, 'step')) . " http $c");
-check('first step status started, amount carried from attempt', $ev[0]['status'] === 'started' && (float) $last['amount'] === 10000000.0);
+check('first step status started, amount carried from attempt', $ev[0]['status'] === 'started' && (float) $last['amount'] === 499999.0);
 check('journey duration on terminal event', $last['journeyDurationMs'] !== null);
 check('device/browser/channel parsed', $last['device'] === 'desktop' && $last['browser'] === 'Chrome' && $last['channel'] === 'web');
 

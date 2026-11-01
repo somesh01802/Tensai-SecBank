@@ -7,6 +7,7 @@ import { AppLayout } from "@/components/layout/AppLayout"
 import { AdminRoute, ProtectedRoute } from "@/components/ProtectedRoute"
 import { LocationConsent } from "@/components/LocationConsent"
 import { FeedbackPrompt } from "@/components/FeedbackPrompt"
+import { MpinPrompt } from "@/components/MpinPrompt"
 import { AdminPage } from "@/pages/AdminPage"
 
 import { LandingPage } from "@/pages/LandingPage"
@@ -31,7 +32,7 @@ import { SettingsPage } from "@/pages/SettingsPage"
 export default function App() {
   const theme = useThemeStore((s) => s.theme)
   const setTheme = useThemeStore((s) => s.set)
-  const isAuthed = useAuthStore((s) => Boolean(s.token))
+  const isAuthed = useAuthStore((s) => s.signedIn)
   const home = useAuthStore((s) => (s.user?.role === "ADMIN" ? "/admin" : "/app"))
 
   useEffect(() => {
@@ -103,9 +104,10 @@ export default function App() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
-    {/* Self-hiding overlays: location consent after sign-in, feedback after each transaction attempt. */}
+    {/* Self-hiding overlays: location consent after sign-in, feedback after each transaction attempt, step-up MPIN. */}
     <LocationConsent />
     <FeedbackPrompt />
+    <MpinPrompt />
     </>
   )
 }

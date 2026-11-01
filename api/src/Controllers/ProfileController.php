@@ -26,6 +26,8 @@ class ProfileController
             $sets[] = 'email = :e'; $params[':e'] = strtolower($b['email']);
         }
         if (!$sets) throw new ApiError('No changes', 400);
+        // VAPT-24: changing the sign-in email needs the MPIN (name changes do not).
+        if (isset($params[':e']) && $params[':e'] !== strtolower((string) $u['email'])) \Tensai\Mpin::stepUp($req, $u);
         $sets[] = 'updated_at = now()';
         try {
             $row = Db::one('UPDATE users SET ' . implode(', ', $sets) . ' WHERE id = :id RETURNING id, email, name', $params);
@@ -44,13 +46,12 @@ class ProfileController
         $b = (array) $req->getParsedBody();
         $cur = $b['currentPassword'] ?? null; $new = $b['newPassword'] ?? null;
         if (!$cur || !$new) throw new ApiError('currentPassword and newPassword are required', 400);
-        if (strlen($new) < 6) throw new ApiError('New password must be at least 6 characters', 400);
+        if ($p = \Tensai\Passwords::problem($new)) throw new ApiError($p, 400);   // VAPT-11
         $row = Db::one('SELECT id, password_hash FROM users WHERE id = :id', [':id' => $u['id']]);
         if (!$row) throw new ApiError('User not found', 404);
         if (!password_verify($cur, $row['passwordHash'])) throw new ApiError('Current password is incorrect', 401);
-        $hash = password_hash($new, PASSWORD_BCRYPT, ['cost' => 10]);
-        Db::run('UPDATE users SET password_hash = :h, updated_at = now() WHERE id = :id', [':h' => $hash, ':id' => $u['id']]);
-        \Tensai\Auth::endOtherSessions($u['id'], $req->getAttribute('token'));   // VAPT-09: other sessions end here
+        Db::run('UPDATE users SET password_hash = :h, updated_at = now() WHERE id = :id', [':h' => \Tensai\Passwords::hash($new), ':id' => $u['id']]);
+        \Tensai\Auth::endOtherSessions($u['id'], $req->getAttribute('sid'));   // VAPT-09: other sessions end here
         \Tensai\Audit::log($req, $u['id'], 'auth.password_changed', 'user', $u['id']);
         return Http::json($res, ['message' => 'Password changed']);
     }

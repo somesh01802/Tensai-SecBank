@@ -27,6 +27,7 @@ class TransactionController
         $from = $b['fromAccount'] ?? null; $to = $b['toAccount'] ?? null;
         $amount = $b['amount'] ?? null; $key = $b['idempotencyKey'] ?? null; $desc = $b['description'] ?? null;
 
+        \Tensai\Mpin::stepUp($req, $u);   // VAPT-05: MPIN for every money movement
         $meta = ['amount' => $amount, 'sourceAccountId' => $from, 'idempotencyKey' => $key,
                  'target' => $to ? 'account ' . Attempts::mask((string) $to) : null];
         return Attempts::run($req, $res, $u, 'P2P', $meta, fn() => $this->transfer($u, $from, $to, $amount, $key, $desc));

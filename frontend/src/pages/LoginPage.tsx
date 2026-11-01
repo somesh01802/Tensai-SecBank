@@ -19,13 +19,14 @@ export function LoginPage() {
   const [identifier, setIdentifier] = useState("")
   const [password, setPassword] = useState("")
   const [mpin, setMpin] = useState("")
+  const [otp, setOtp] = useState("")
   const [showPass, setShowPass] = useState(false)
   const setAuth = useAuthStore((s) => s.setAuth)
   const startSession = useAuthStore((s) => s.startSession)
   const setLoginMeta = useAuthStore((s) => s.setLoginMeta)
   const navigate = useNavigate()
   const isAdmin = audience === "admin"
-  const effectiveMode: Mode = isAdmin ? "password" : mode // admins sign in with email + password only
+  const effectiveMode: Mode = isAdmin ? "password" : mode // admins sign in with email + password + authenticator code
 
   const mutation = useMutation({
     mutationFn: authApi.login,
@@ -46,7 +47,8 @@ export function LoginPage() {
     startSession() // fresh X-Session-Id for this sign-in (correlates the whole session in Kibana)
     if (isAdmin) {
       if (!identifier.includes("@")) return toast.error("Admins sign in with their email address")
-      mutation.mutate({ email: identifier, password, loginAs: "admin" })
+      if (!/^\d{6}$/.test(otp)) return toast.error("Enter the 6-digit authenticator code")
+      mutation.mutate({ email: identifier, password, otp, loginAs: "admin" })
     } else if (mode === "mpin") {
       if (!/^\d{10}$/.test(identifier)) return toast.error("Enter your 10-digit mobile number")
       if (!/^\d{6}$/.test(mpin)) return toast.error("Enter your 6-digit MPIN")
@@ -144,8 +146,10 @@ export function LoginPage() {
           <div>
             <label className="label">MPIN</label>
             <input
+              type="password"
               className="input text-center font-mono text-2xl tracking-[0.6em]"
               inputMode="numeric"
+              autoComplete="off"
               maxLength={6}
               value={mpin}
               onChange={(e) => setMpin(e.target.value.replace(/\D/g, "").slice(0, 6))}
@@ -170,6 +174,22 @@ export function LoginPage() {
                 {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
+          </div>
+        )}
+
+        {isAdmin && (
+          <div>
+            <label className="label">Authenticator code</label>
+            <input
+              className="input text-center font-mono text-2xl tracking-[0.6em]"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              value={otp}
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              placeholder="000000"
+              required
+            />
           </div>
         )}
 

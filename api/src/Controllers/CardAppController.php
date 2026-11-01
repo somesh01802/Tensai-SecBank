@@ -52,18 +52,18 @@ class CardAppController
         if (!$p) throw new ApiError('Card product not found', 404);
 
         $full = '5' . self::digits(15);
-        $cvv = self::digits(3);
         $expiryMonth = ((((int) date('n') - 1) + random_int(0, 11)) % 12) + 1;
         $expiryYear = ((int) date('Y') + 3) % 100;
         $holder = $u['name'] ?: 'Card Holder';
 
-        $out = Db::tx(function (PDO $pdo) use ($u, $p, $full, $cvv, $expiryMonth, $expiryYear, $holder, $mobile, $pan, $dob) {
+        $out = Db::tx(function (PDO $pdo) use ($u, $p, $full, $expiryMonth, $expiryYear, $holder, $mobile, $pan, $dob) {
             $st = $pdo->prepare(
                 "INSERT INTO cards (user_id, holder_name, product_id, last_four, full_number, cvv,
                     expiry_month, expiry_year, type, brand, color_hint, network)
                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING *"
             );
-            $st->execute([$u['id'], $holder, $p['id'], substr($full, -4), $full, $cvv,
+            // VAPT-06: card number encrypted, no CVV stored (derived on reveal).
+            $st->execute([$u['id'], $holder, $p['id'], substr($full, -4), \Tensai\Crypto::encrypt($full), null,
                 $expiryMonth, $expiryYear, $p['cardType'], $p['network'], $p['colorHint'], $p['network']]);
             $card = Db::camelizeRow($st->fetch());
 
@@ -71,7 +71,8 @@ class CardAppController
                 "INSERT INTO card_applications (user_id, product_id, mobile_number, pan, dob, status, card_id, processed_at)
                  VALUES (?,?,?,?,?,'APPROVED',?, now()) RETURNING *"
             );
-            $ast->execute([$u['id'], $p['id'], $mobile, $pan, substr($dob, 0, 10), $card['id']]);
+            // VAPT-20: tax id and date of birth encrypted at rest.
+            $ast->execute([$u['id'], $p['id'], $mobile, \Tensai\Crypto::encrypt($pan), \Tensai\Crypto::encrypt(substr($dob, 0, 10)), $card['id']]);
             $app = Db::camelizeRow($ast->fetch());
             return ['card' => $card, 'application' => $app];
         });
@@ -84,14 +85,14 @@ class CardAppController
         $active = Db::one('SELECT COUNT(*)::int AS n FROM cards WHERE user_id = :u AND deleted_at IS NULL', [':u' => $u['id']]);
         if ((int) $active['n'] >= 2) Rewards::award($u['id'], 'card.active.gte.2');
 
-        return Http::json($res, ['application' => $out['application'], 'card' => CardController::mask($out['card'])], 201);
+        return Http::json($res, ['application' => self::maskApp($out['application']), 'card' => CardController::mask($out['card'])], 201);
     }
 
     public function listApplications(Request $req, Response $res): Response
     {
         $u = $req->getAttribute('user');
         $rows = Db::all('SELECT * FROM card_applications WHERE user_id = :u', [':u' => $u['id']]);
-        return Http::json($res, ['applications' => $rows]);
+        return Http::json($res, ['applications' => array_map([self::class, 'maskApp'], $rows)]);
     }
 
     public function reveal(Request $req, Response $res, array $args): Response
@@ -99,13 +100,22 @@ class CardAppController
         $u = $req->getAttribute('user');
         $c = Db::one('SELECT * FROM cards WHERE id = :i AND user_id = :u LIMIT 1', [':i' => $args['id'], ':u' => $u['id']]);
         if (!$c) throw new ApiError('Card not found', 404);
+        \Tensai\Mpin::stepUp($req, $u);   // VAPT-06: full card data only after the MPIN
         \Tensai\Audit::log($req, $u['id'], 'card.revealed', 'card', $c['id']);   // VAPT-25
         Rewards::award($u['id'], 'card.number.revealed');
         Rewards::award($u['id'], 'card.cvv.revealed');
         return Http::json($res, [
-            'fullNumber' => $c['fullNumber'],
-            'cvv' => $c['cvv'],
+            'fullNumber' => $full = (string) \Tensai\Crypto::decrypt($c['fullNumber']),
+            'cvv' => \Tensai\Crypto::cvv($full, (int) $c['expiryMonth'], (int) $c['expiryYear']),
             'expiry' => str_pad((string) $c['expiryMonth'], 2, '0', STR_PAD_LEFT) . '/' . str_pad((string) $c['expiryYear'], 2, '0', STR_PAD_LEFT),
         ]);
+    }
+
+    /** Applications are shown back with the tax id masked and no date of birth (VAPT-20). */
+    private static function maskApp(array $a): array
+    {
+        $a['pan'] = \Tensai\Crypto::maskTaxId($a['pan'] ?? null);
+        unset($a['dob']);
+        return $a;
     }
 }

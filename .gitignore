@@ -33,3 +33,6 @@ frontend/*.tsbuildinfo
 
 # Exporter checkpoint (bin/export-to-elastic.php --incremental)
 api/var/
+
+# Legacy Node backend, removed in 0010 (kept only in git history)
+/backend/

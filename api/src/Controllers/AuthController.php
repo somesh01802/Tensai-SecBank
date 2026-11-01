@@ -20,7 +20,7 @@ class AuthController
             throw new ApiError('name, email, password and mobileNumber are required', 400);
         if (!preg_match(self::EMAIL_RE, $email)) throw new ApiError('Invalid email address', 400);
         if (!preg_match(self::MOBILE_RE, $mobile)) throw new ApiError('Mobile number must be exactly 10 digits', 400);
-        if (strlen($password) < 6) throw new ApiError('Password must be at least 6 characters', 400);
+        if ($p = \Tensai\Passwords::problem($password)) throw new ApiError($p, 400);   // VAPT-11
 
         $existing = Db::one(
             'SELECT id, email, mobile_number FROM users WHERE email = :e OR mobile_number = :m LIMIT 1',
@@ -29,7 +29,7 @@ class AuthController
         // VAPT-10: same answer whether the email or the mobile number is taken (no account enumeration).
         if ($existing) throw new ApiError('We could not register with these details. If you already have an account, please sign in.', 422);
 
-        $hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 10]);
+        $hash = \Tensai\Passwords::hash($password);
         // Role is never taken from the request: registration always creates a CUSTOMER.
         // is_synthetic is derived server-side from reserved test-data email domains.
         $user = Db::one(
@@ -89,6 +89,9 @@ class AuthController
             throw new ApiError('Credentials are invalid', 401);
         }
         Db::run('DELETE FROM auth_failures WHERE identifier = :i', [':i' => $identifier]);
+        // Older hashes (cost 10) are upgraded transparently on the next successful password sign-in.
+        if (!$mpin && \Tensai\Passwords::needsRehash($user['passwordHash']))
+            Db::run('UPDATE users SET password_hash = :h WHERE id = :u', [':h' => \Tensai\Passwords::hash((string) $password), ':u' => $user['id']]);
 
         // Separation of duties: admins only via the Admin sign-in, customers only via the Customer sign-in.
         $role = $user['role'] ?? 'CUSTOMER';
@@ -98,6 +101,14 @@ class AuthController
             throw new ApiError($loginAs === 'admin'
                 ? 'This account is not authorized for admin access'
                 : 'Admin accounts must use the Admin sign-in', 403);
+        }
+
+        // VAPT-04: admins also need a one-time code from their authenticator app (enrolled with bin/create-admin.php --enroll-mfa).
+        if ($role === 'ADMIN' && !\Tensai\Totp::verify($user['id'], isset($b['otp']) ? (string) $b['otp'] : null)) {
+            $this->track($req, $user, 'login', $method, 'failure');
+            self::failed($identifier, $ip);
+            Audit::log($req, $user['id'], 'admin.login_denied', 'user', $user['id'], ['reason' => $user['totpSecret'] ? 'otp invalid' : 'mfa not enrolled']);
+            throw new ApiError($user['totpSecret'] ? 'Authenticator code is invalid' : 'Admin MFA is not enrolled', 401);
         }
 
         $eventId = $this->track($req, $user, 'login', $method, 'success');
@@ -175,7 +186,10 @@ class AuthController
 
     private static function failed(string $identifier, ?string $ip): void
     {
-        Db::run('INSERT INTO auth_failures (identifier, ip) VALUES (:i, :ip)', [':i' => $identifier, ':ip' => $ip]);
+        // Reserved synthetic identities (the load generator, which deliberately fails some sign-ins from one host) only
+        // count against themselves, so they cannot lock real customers on that address out.
+        Db::run('INSERT INTO auth_failures (identifier, ip) VALUES (:i, :ip)',
+            [':i' => $identifier, ':ip' => self::isSyntheticEmail($identifier) ? null : $ip]);
         Db::run("DELETE FROM auth_failures WHERE created_at < now() - interval '1 day' AND identifier = :i", [':i' => $identifier]);
     }
 
@@ -209,6 +223,9 @@ class AuthController
             try {
                 Db::run('INSERT INTO revoked_tokens (token, expires_at) VALUES (:t,:e) ON CONFLICT DO NOTHING',
                     [':t' => $token, ':e' => $expires]);
+                // The whole sliding session ends, including tokens renewed from it (VAPT-09).
+                if ($sid = Token::claims($token)['sid'] ?? null)
+                    Db::run('INSERT INTO revoked_sessions (sid, expires_at) VALUES (:s,:e) ON CONFLICT DO NOTHING', [':s' => $sid, ':e' => $expires]);
             } catch (\Throwable $e) { /* ignore */ }
         }
         return Http::json($res, ['message' => 'User logged out successfully'])
@@ -238,7 +255,7 @@ class AuthController
         }
         $r = Mpin::set($u['id'], $mpin);
         if (!$r['ok']) throw new ApiError($r['message'], 400);
-        if ($change) \Tensai\Auth::endOtherSessions($u['id'], $req->getAttribute('token'));
+        if ($change) \Tensai\Auth::endOtherSessions($u['id'], $req->getAttribute('sid'));
         Audit::log($req, $u['id'], $change ? 'auth.mpin_changed' : 'auth.mpin_set', 'user', $u['id']);
         return Http::json($res, ['message' => 'MPIN saved']);
     }
@@ -296,13 +313,6 @@ class AuthController
 
     private function withAuthCookie(Request $req, Response $res, string $token): Response
     {
-        // VAPT-17: Secure whenever the request arrived over HTTPS (directly or via the TLS-terminating proxy).
-        $sp = $req->getServerParams();
-        $https = $req->getUri()->getScheme() === 'https' || strtolower((string) ($sp['HTTPS'] ?? '')) === 'on'
-            || strtolower($req->getHeaderLine('X-Forwarded-Proto')) === 'https';
-        $secure = $https ? ' Secure;' : '';
-        $maxAge = Token::ttlSeconds();
-        $cookie = "token=$token; Path=/; HttpOnly; SameSite=Lax; Max-Age=$maxAge;$secure";
-        return $res->withAddedHeader('Set-Cookie', $cookie);
+        return $res->withAddedHeader('Set-Cookie', \Tensai\Auth::cookie($req, $token));
     }
 }

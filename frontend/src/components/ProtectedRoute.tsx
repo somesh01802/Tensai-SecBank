@@ -10,7 +10,7 @@ export function ProtectedRoute({
   children: React.ReactNode
   requireMpin?: boolean
 }) {
-  const token = useAuthStore((s) => s.token)
+  const signedIn = useAuthStore((s) => s.signedIn)
   const hasMpin = useAuthStore((s) => s.hasMpin)
   const setHasMpin = useAuthStore((s) => s.setHasMpin)
   const isAdmin = useAuthStore((s) => s.user?.role === "ADMIN")
@@ -37,7 +37,7 @@ export function ProtectedRoute({
     return () => { cancelled = true }
   }, [requireMpin, hasMpin, setHasMpin, isAdmin])
 
-  if (!token) return <Navigate to="/login" replace state={{ from: location }} />
+  if (!signedIn) return <Navigate to="/login" replace state={{ from: location }} />
   // Staff accounts have no customer banking area.
   if (isAdmin) return <Navigate to="/admin" replace />
 
@@ -51,9 +51,9 @@ export function ProtectedRoute({
 
 /** Admin console guard (UX only — the API enforces the ADMIN role on every /api/admin call). */
 export function AdminRoute({ children }: { children: React.ReactNode }) {
-  const token = useAuthStore((s) => s.token)
+  const signedIn = useAuthStore((s) => s.signedIn)
   const role = useAuthStore((s) => s.user?.role)
-  if (!token) return <Navigate to="/login" replace />
+  if (!signedIn) return <Navigate to="/login" replace />
   if (role !== "ADMIN") return <Navigate to="/app" replace />
   return <>{children}</>
 }

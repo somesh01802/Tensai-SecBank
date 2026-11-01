@@ -26,6 +26,7 @@ class BeneficiaryController
         $b = (array) $req->getParsedBody();
         $nickname = $b['nickname'] ?? null; $to = $b['toAccountId'] ?? null;
         if (!$nickname || !$to) throw new ApiError('nickname and toAccountId are required', 400);
+        \Tensai\Mpin::stepUp($req, $u);   // VAPT-05
         $target = Db::one('SELECT user_id FROM accounts WHERE id = :a', [':a' => $to]);
         if (!$target) throw new ApiError('Target account not found', 404);
         if ($target['userId'] === $u['id']) throw new ApiError('Cannot add your own account as a beneficiary', 400);

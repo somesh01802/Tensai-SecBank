@@ -3,10 +3,9 @@ import { Bot, Loader2, Send, Sparkles, X } from "lucide-react"
 
 import { chatbotApi, type ChatTurn } from "@/api/chatbot"
 import { apiErrorMessage } from "@/api/client"
-import { useAuthStore } from "@/stores/authStore"
+import { CHAT_HISTORY_KEY, useAuthStore } from "@/stores/authStore"
 import { NexusIcon } from "./NexusIcon"
 
-const STORAGE_KEY = "tsb_nexus_history_v1"
 const WELCOME_KEY = "tsb_nexus_welcomed_v2"
 
 const STARTER_QUESTIONS = [
@@ -27,13 +26,17 @@ const STARTER_QUESTIONS = [
  */
 export function Chatbot() {
   const user = useAuthStore((s) => s.user)
-  const token = useAuthStore((s) => s.token)
+  const signedIn = useAuthStore((s) => s.signedIn)
+  // History is kept per user (pseudonymous userRef) and wiped on sign-out; no userRef → memory only.
+  const userRef = useAuthStore((s) => s.userRef)
+  const storageKey = userRef ? `${CHAT_HISTORY_KEY}:${userRef}` : null
   const [open, setOpen] = useState(false)
   const [showWelcome, setShowWelcome] = useState(false)
   const [input, setInput] = useState("")
   const [messages, setMessages] = useState<ChatTurn[]>(() => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY)
+      localStorage.removeItem(CHAT_HISTORY_KEY) // legacy unscoped history, possibly another user's
+      const raw = storageKey ? localStorage.getItem(storageKey) : null
       if (raw) return JSON.parse(raw)
     } catch { /* ignore */ }
     return []
@@ -44,23 +47,24 @@ export function Chatbot() {
 
   // First-visit welcome dialog — delayed so the app has settled.
   useEffect(() => {
-    if (!token || !user) return
+    if (!signedIn || !user) return
     let seen = false
     try { seen = Boolean(localStorage.getItem(WELCOME_KEY)) } catch { /* ignore */ }
     if (seen) return
     const t = setTimeout(() => setShowWelcome(true), 1200)
     return () => clearTimeout(t)
-  }, [token, user])
+  }, [signedIn, user])
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(messages)) } catch { /* ignore */ }
-  }, [messages])
+    if (!storageKey || !signedIn) return
+    try { localStorage.setItem(storageKey, JSON.stringify(messages)) } catch { /* ignore */ }
+  }, [messages, storageKey, signedIn])
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [messages, open, pending])
 
-  if (!token || !user) return null
+  if (!signedIn || !user) return null
 
   function dismissWelcome() {
     setShowWelcome(false)

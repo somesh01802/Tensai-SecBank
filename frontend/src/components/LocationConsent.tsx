@@ -15,13 +15,13 @@ import type { LocationStatus } from "@/types/api"
  */
 export function LocationConsent() {
   const eventId = useAuthStore((s) => s.pendingLocationEventId)
-  const token = useAuthStore((s) => s.token)
+  const signedIn = useAuthStore((s) => s.signedIn)
   const clearPending = useAuthStore((s) => s.clearPendingLocation)
   const { pathname } = useLocation()
   const [busy, setBusy] = useState(false)
 
   // Not over the splash animation / MPIN gate; the prompt waits until the app (or admin console) shows.
-  if (!eventId || !token || pathname === "/splash" || pathname === "/mpin-setup") return null
+  if (!eventId || !signedIn || pathname === "/splash" || pathname === "/mpin-setup") return null
 
   async function send(status: LocationStatus, coords?: GeolocationCoordinates) {
     try {
