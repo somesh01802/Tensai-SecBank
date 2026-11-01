@@ -211,6 +211,16 @@ Optional, a week of quiet baseline so ML jobs have history (about 30 minutes to 
 Kibana: **Stack Management → Saved Objects → Import** `kibana/secbank-dashboards.ndjson` ("Check for existing
 objects", overwrite). Only `secbank-*` objects and the `SecBank wallboard` workpad are created.
 
+Kibana-side objects (10 journey SLOs with burn-rate rules, problem / payments-svc rules, 4 ML jobs). Create the key
+in Kibana Dev Tools as the deployment's `elastic` user (`POST /_security/api_key {"name": "secbank-kibana-setup"}`),
+put `KIBANA_URL` and `KIBANA_API_KEY=<encoded>` in `api/.env` (never in chat or git), then:
+```bash
+node --version                                                             # needs 18 or newer
+cd /var/www/tensai-secbank && sudo node kibana/setup-kibana.mjs          # re-runnable; prints ok / FAIL per object
+sudo node kibana/setup-kibana.mjs --forecast                               # a few hours later: 1-day memory forecast
+```
+Removal of exactly these objects: `sudo node kibana/setup-kibana.mjs --remove`.
+
 ## Demo runs
 - Live: `sudo -u www-data php bin/simulate.php --start=S1` (S1..S10) and `--stop=S1`; `--list` shows what runs.
 - Frozen four-problem hour (the spec's 17:46 screen), simulator paused:
@@ -249,4 +259,5 @@ sudo -u postgres psql -p 5433 tensai -v ON_ERROR_STOP=1 -f api/migrations/rollba
 ```
 Elasticsearch (only if the SecBank data must go; deletes simulated data and the journey copy, nothing in `tensai-*`):
 `DELETE _data_stream/logs-bank.*,metrics-bank.*` then `DELETE bank-*` and `DELETE _index_template/logs-bank.*,metrics-bank.*`.
-Kibana: Saved Objects → search `secbank` → select all → Delete; Canvas → delete `SecBank wallboard`.
+Kibana: `sudo node kibana/setup-kibana.mjs --remove` (SLOs, rules, ML jobs), then Saved Objects → search `secbank` →
+select all → Delete; Canvas → delete `SecBank wallboard`.

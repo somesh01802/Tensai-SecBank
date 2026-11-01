@@ -41,7 +41,7 @@ final class Simulator
         'bill_pay' => [[.45, 'insufficient_funds', 'business', 'failed'], [.45, 'user_cancel', 'user', 'abandoned'], [.10, 'gateway_timeout', 'technical', 'failed', 'payment_gw']],
         'p2p_transfer' => [[.40, 'insufficient_funds', 'business', 'failed'], [.15, 'transfer_limit', 'business', 'failed'], [.37, 'user_cancel', 'user', 'abandoned'], [.08, 'otp_expired', 'technical', 'failed', 'sms_otp']],
         'card_payment' => [[.60, 'card_declined', 'business', 'failed'], [.25, 'fraud_hold', 'business', 'failed'], [.15, 'processor_timeout', 'technical', 'failed', 'card_processor']],
-        '*' => [[.65, 'user_cancel', 'user', 'abandoned'], [.25, 'validation_error', 'user', 'failed'], [.10, 'service_error', 'technical', 'failed']],
+        '*' => [[.73, 'user_cancel', 'user', 'abandoned'], [.25, 'validation_error', 'user', 'failed'], [.02, 'service_error', 'technical', 'failed']],
     ];
 
     public const SERVICES = ['web-ui' => '7.4.1', 'api-gateway' => '3.2.0', 'auth-svc' => '2.3.0', 'accounts-svc' => '1.9.4',
@@ -272,29 +272,47 @@ final class Simulator
             ];
             $out[] = $this->row('business', $t + ($ms ?? 0) / 1000, $doc);
             array_push($out, ...array_slice($apm, 1));
-            if ($ch === 'web' || $ch === 'mobile_web') $out[] = $this->pageView($j, $s['step'], $c, $mobile, $ua, $jid, $trace, $shown);
+            if ($ch === 'web' || $ch === 'mobile_web') array_push($out, ...$this->pageView($j, $s['step'], $c, $mobile, $ua, $jid, $trace, $shown));
             $t += ($ms ?? 500) / 1000;
         }
         return $out;
     }
 
-    /** Core Web Vitals for one screen. S4 makes the front end slow after its release; the backend stays green. */
+    private const JS_ERRORS = [["TypeError", "Cannot read properties of undefined (reading 'amount')"],
+        ["ChunkLoadError", "Loading chunk 412 failed"], ["NetworkError", "Failed to fetch"], ["RangeError", "Invalid time value"]];
+
+    /**
+     * Core Web Vitals for one screen, plus the occasional JavaScript error (0.4 %; 3 % after the S4 release).
+     * S4 makes the front end slow after its release; the backend stays green.
+     */
     private function pageView(string $j, string $step, array $c, bool $mobile, string $ua, string $jid, string $trace, float $t): array
     {
         $x = $this->ramp('S4', $t, 2);
         $lcp = self::logn($mobile ? 1700 : 1250, 0.35) * (1 + 1.4 * $x);
         $inp = self::logn(110, 0.45) * (1 + 2 * $x);
         $cls = self::r() < 0.06 ? round(0.1 + self::r() * 0.2, 3) : round(self::r() * 0.06, 3);
-        return $this->row('business', $t, [
+        $route = '/' . str_replace('_', '-', $j) . '/' . str_replace('_', '-', $step);
+        $out = [];
+        if (self::r() < 0.004 + 0.026 * $x) {
+            [$type, $msg] = self::JS_ERRORS[$x > 0 ? 1 : mt_rand(0, count(self::JS_ERRORS) - 1)];
+            $out[] = $this->row('business', $t + 0.8, ['event' => ['dataset' => 'bank.business', 'category' => 'js_error', 'action' => 'js-error'],
+                'error' => ['type' => $type, 'message' => $msg], 'page' => ['route' => $route],
+                'journey' => ['name' => $j, 'id' => $jid, 'step' => $step, 'step_key' => "$j:$step"],
+                'bank' => ['channel' => $mobile ? 'mobile_web' : 'web', 'region' => $c[2], 'customer' => ['ref' => $c[0], 'segment' => $c[1]]],
+                'service' => ['name' => 'web-ui', 'version' => $this->version('web-ui', $t), 'environment' => 'production'],
+                'user_agent' => ['name' => $ua, 'device' => ['name' => $mobile ? 'mobile' : 'desktop']]]);
+        }
+        $out[] = $this->row('business', $t, [
             'event' => ['dataset' => 'bank.business', 'category' => 'page_view', 'action' => 'page-load', 'duration' => (int) ($lcp * 1e6)],
             'journey' => ['name' => $j, 'id' => $jid, 'step' => $step, 'step_key' => "$j:$step"],
-            'page' => ['route' => '/' . str_replace('_', '-', $j) . '/' . str_replace('_', '-', $step),
+            'page' => ['route' => $route,
                 'lcp_ms' => round($lcp), 'inp_ms' => round($inp), 'cls' => $cls, 'vitals_pass' => $lcp <= 2500 && $inp <= 200 && $cls <= 0.1],
             'bank' => ['channel' => $mobile ? 'mobile_web' : 'web', 'region' => $c[2], 'customer' => ['ref' => $c[0], 'segment' => $c[1]]],
             'trace' => ['id' => $trace],
             'service' => ['name' => 'web-ui', 'version' => $this->version('web-ui', $t), 'environment' => 'production'],
             'user_agent' => ['name' => $ua, 'device' => ['name' => $mobile ? 'mobile' : 'desktop']],
         ]);
+        return $out;
     }
 
     /**
@@ -344,7 +362,20 @@ final class Simulator
         // An expired OTP is the customer's 4xx, not a server error: auth-svc stays green while sms_otp degrades (S3).
         $res = $techFail && $dep !== 'sms_otp' ? 'HTTP 5xx' : ($fail ? 'HTTP 4xx' : 'HTTP 2xx');
         $out = [$trace];
-        $out[] = $this->apm('api-gateway', $t, ['transaction' => self::tx($gw, $trace, null, $route, $t, $ms + 12, $res, 'request', 1)]);
+        $gwParent = null;
+        if ($ch === 'web' || $ch === 'mobile_web') {
+            // Browser side: the web-ui click calls api-gateway (service map edge web-ui -> api-gateway).
+            $wx = self::hex(16); $ws = self::hex(16);
+            $out[] = $this->apm('web-ui', $t - 0.03, ['transaction' => self::tx($wx, $trace, null, 'Click - ' . str_replace('_', ' ', $step), $t - 0.03,
+                $ms + 60, $res, 'user-interaction', 1)]);
+            $out[] = $this->apm('web-ui', $t - 0.02, ['span' => ['id' => $ws, 'transaction_id' => $wx, 'parent_id' => $wx, 'trace_id' => $trace,
+                'name' => $route, 'type' => 'external', 'subtype' => 'http', 'timestamp' => (int) (($t - 0.02) * 1e6), 'duration' => round($ms + 30, 3),
+                'outcome' => str_starts_with($res, 'HTTP 5') ? 'failure' : 'success', 'sample_rate' => 0.1,
+                'context' => ['destination' => ['service' => ['resource' => 'api-gateway', 'name' => 'api-gateway', 'type' => 'external']],
+                    'service' => ['target' => ['type' => 'http', 'name' => 'api-gateway']]]]]);
+            $gwParent = $ws;
+        }
+        $out[] = $this->apm('api-gateway', $t, ['transaction' => self::tx($gw, $trace, $gwParent, $route, $t, $ms + 12, $res, 'request', 1)]);
         $out[] = $this->apm($svc, $t, ['transaction' => self::tx($tx, $trace, $gw, $route, $t + 0.005, $ms, $res, 'request', count($spans))]);
         $at = $t + 0.01;
         foreach ($spans as $s) {

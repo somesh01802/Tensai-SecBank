@@ -71,3 +71,8 @@ Workflows, Agent Builder), the panel uses the spec's fallback on our indices: SL
 problems from the detector (`bank-problems`) instead of alert/case documents, synthetic runs from
 `logs-bank.synthetics-default`, change points with ES|QL `CHANGE_POINT`, and links to the APM service map, correlations
 and Workflows apps.
+
+`setup-kibana.mjs` creates the Kibana-side objects through the Kibana and Elasticsearch APIs: 10 journey SLOs
+(`secbank-<journey>`) with burn-rate rules, rules on open problems and payments-svc errors/latency, and ML jobs
+`secbank-autopay-volume`, `secbank-payment-gw-latency`, `secbank-branch-volume`, `secbank-pod-memory`. It reads
+`KIBANA_URL`, `KIBANA_API_KEY`, `ES_URL` from `api/.env`; re-runnable; `--remove` deletes exactly these objects.

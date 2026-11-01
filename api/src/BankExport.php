@@ -47,6 +47,7 @@ final class BankExport
                 'cls' => ['type' => 'double'], 'vitals_pass' => ['type' => 'boolean']]],
             'trace' => ['properties' => ['id' => $kw]],
             'transaction' => ['properties' => ['id' => $kw]],
+            'error' => ['properties' => ['type' => $kw, 'message' => $kw]],
             'service' => ['properties' => ['name' => $kw, 'version' => $kw, 'environment' => $kw]],
             'user_agent' => ['properties' => ['name' => $kw, 'device' => ['properties' => ['name' => $kw]]]],
             'http' => ['properties' => ['response' => ['properties' => ['status_code' => ['type' => 'integer']]]]],

@@ -206,9 +206,17 @@ const DEFINITIONS = `**Simulated bank data** (labels.data_source = simulator) pl
 // D0 Bank Pulse
 // =====================================================================
 const d0 = {
-  healthy: esql("secbank-d0-healthy", "Journeys healthy", `FROM bank-journey-health | WHERE ${last(10)} ${JHI}
-    | EVAL ok = CASE(jhi >= 90, 1, 0) | STATS healthy = SUM(ok), journeys = COUNT(*) | EVAL label = CONCAT(TO_STRING(healthy), " of ", TO_STRING(journeys))
-    | KEEP healthy, label`, [["healthy", "number"], ["label", "string"]], { metric: "healthy", secondary: "label" }),
+  // Healthy = index 90+ AND no open problem attached (a quietly failing journey can keep a green index: autopay, S9).
+  healthy: esql("secbank-d0-healthy", "Journeys healthy", `FROM bank-journey-health, bank-problems
+    | WHERE (health.attempts IS NOT NULL AND ${last(10)}) OR problem.status == "open" | MV_EXPAND journey.name
+    | STATS n = SUM(health.attempts), done = SUM(health.completed), tech = SUM(health.tech_failures), sat = SUM(health.satisfied),
+      tol = SUM(health.tolerating), pv = SUM(health.page_views), pvok = SUM(health.page_views_pass), slo = MAX(health.slo_completion_pct),
+      problems = SUM(CASE(problem.status == "open", 1, 0)) BY journey.name | WHERE n > 0
+    | EVAL c = LEAST(1.0, (TO_DOUBLE(done) / n) / (slo / 100.0)), a = (sat + tol / 2.0) / n, e = GREATEST(0.0, 1 - (TO_DOUBLE(tech) / n) / 0.05),
+      x = CASE(pv > 0, TO_DOUBLE(pvok) / pv, 1.0), jhi = ROUND(100 * (0.4 * c + 0.25 * a + 0.2 * e + 0.15 * x), 0)
+    | EVAL ok = CASE(jhi >= 90 AND problems == 0, 1, 0) | STATS healthy = SUM(ok), journeys = COUNT(*)
+    | EVAL label = CONCAT(TO_STRING(healthy), " of ", TO_STRING(journeys), " (index 90+, no open problem)") | KEEP healthy, label`,
+    [["healthy", "number"], ["label", "string"]], { metric: "healthy", secondary: "label" }),
   impacted: esql("secbank-d0-impacted", "Customers impacted now", `FROM ${BIZ} | WHERE ${last(15)} AND event.category == "journey" AND ${NOLOAD} ${IMPACTED}
     | STATS customers = COUNT_DISTINCT(bank.customer.ref)`, [["customers", "number"]], { metric: "customers", color: COL.bad }),
   var: esql("secbank-d0-var", "Value at risk this hour", `FROM ${BIZ} | WHERE ${last(60)} AND event.category == "journey" AND ${NOLOAD}
@@ -413,10 +421,12 @@ const d2 = {
   health: esql("secbank-d2-health", "In-person journey completion", `FROM ${BIZ} | WHERE ${INPERSON} AND event.category == "journey" AND ${TERMINAL}
     | STATS attempts = COUNT(*), done = SUM(CASE(journey.status == "completed", 1, 0)) | EVAL completion_pct = ROUND(100.0 * done / attempts, 1) | KEEP completion_pct`,
     [["completion_pct", "number", "Completion % (branch and ATM)"]], { metric: "completion_pct", palette: bands([95, 98, 100.1]) }),
+  // Over the digital payment journeys (bill pay, transfers, card payments), where value moves.
   regions: esql("secbank-d2-regions-hit", "Regions with impacted digital customers", `FROM ${BIZ} | WHERE ${DIGITAL} AND event.category == "journey" AND ${TERMINAL}
+    AND journey.name IN ("bill_pay", "p2p_transfer", "card_payment")
     | STATS n = COUNT(*), tech = SUM(CASE(${TECH}, 1, 0)) BY bank.region | WHERE TO_DOUBLE(tech) / n > 0.02
     | STATS regions = COUNT(*), names = MV_CONCAT(VALUES(bank.region), ", ")`,
-    [["regions", "number", "Regions over 2 % digital failures"], ["names", "string"]], { metric: "regions", secondary: "names" }),
+    [["regions", "number", "Regions over 2 % digital payment failures"], ["names", "string"]], { metric: "regions", secondary: "names" }),
   problems: esql("secbank-d2-problems", "Branch and ATM problems", `FROM bank-problems | WHERE problem.status == "open" AND problem.kind == "branch_dark"
     | KEEP problem.id, problem.title, bank.region, problem.started_at, impact.value_delayed, problem.owner`,
     [["problem.id", "string", "Problem"], ["problem.title", "string"], ["bank.region", "string", "Region"], ["problem.started_at", "date", "Started"],
@@ -567,11 +577,19 @@ const d4 = {
     | STATS attempts = COUNT(*), done = SUM(CASE(journey.status == "completed", 1, 0)), p95_ms = ROUND(PERCENTILE(journey.duration_ms, 95)) BY journey.name
     | EVAL completion_pct = ROUND(100.0 * done / attempts, 1) | SORT attempts DESC | KEEP journey.name, attempts, completion_pct, p95_ms`,
     [["journey.name", "string", "Journey"], ["attempts", "number"], ["completion_pct", "number"], ["p95_ms", "number", "p95 ms"]], { table: true }),
-  scope: markdown("secbank-d4-scope", "Scope", "Mobile web and desktop web only: no native app, and no session replay (Elastic does not offer it). Simulated page views carry LCP, INP and CLS on `page.*`; the real React app reports through the Elastic RUM agent (service `tensai-secbank-web`) in the User Experience app. JS errors by release are not simulated."),
+  jsErrors: esql("secbank-d4-js-errors", "JS errors", `FROM ${BIZ} | WHERE event.category IN ("page_view", "js_error")
+    | STATS errors = SUM(CASE(event.category == "js_error", 1, 0)), views = SUM(CASE(event.category == "page_view", 1, 0))
+    | EVAL per_1000 = ROUND(1000.0 * errors / views, 1), detail = CONCAT(TO_STRING(errors), " errors") | KEEP per_1000, detail`,
+    [["per_1000", "number", "JS errors per 1,000 page views"], ["detail", "string"]], { metric: "per_1000", secondary: "detail" }),
+  jsByRelease: esql("secbank-d4-js-release", "JS errors by release", `FROM ${BIZ} | WHERE event.category == "js_error"
+    | STATS errors = COUNT(*) BY service.version, error.type | SORT service.version`,
+    [["errors", "number"], ["service.version", "string", "web-ui release"], ["error.type", "string", "Error"]],
+    { xy: "bar_stacked", x: "service.version", y: ["errors"], split: "error.type" }),
+  scope: markdown("secbank-d4-scope", "Scope", "Mobile web and desktop web only: no native app, and no session replay (Elastic does not offer it). Simulated page views carry LCP, INP and CLS on `page.*` and JS errors as `event.category : js_error`; the real React app reports through the Elastic RUM agent (service `tensai-secbank-web`) in the User Experience app."),
 }
 dashboard(4, "Digital experience: Core Web Vitals by page, device and release; synthetic checks against real users; the partner API.", [
-  [7, [d4.views, 8], [d4.pass, 8], [d4.lcp, 8], [d4.inp, 8], [d4.cls, 8], [d4.synthAvail, 8]],
-  [13, [d4.trend, 32], [d4.releases, 16]],
+  [7, [d4.views, 7], [d4.pass, 7], [d4.lcp, 7], [d4.inp, 7], [d4.cls, 6], [d4.jsErrors, 7], [d4.synthAvail, 7]],
+  [13, [d4.trend, 24], [d4.jsByRelease, 12], [d4.releases, 12]],
   [12, [d4.gap, 26], [d4.devices, 22]],
   [11, [d4.vsReal, 26], [d4.partner, 22]],
   [5, [d4.scope, 48]],
@@ -588,8 +606,8 @@ const d5 = {
     | EVAL entity = CASE(processor.event == "span", span.destination.service.resource, service.name),
       us = CASE(processor.event == "span", span.duration.us, transaction.duration.us), bad = CASE(event.outcome == "failure", 1, 0)
     | STATS p95_ms = PERCENTILE(us, 95) / 1000, fail_pct = 100.0 * AVG(bad) BY entity
-    | EVAL ok = CASE(p95_ms <= 3000 AND fail_pct <= 1, 1, 0) | STATS in_slo = SUM(ok), total = COUNT(*), breaching = MV_CONCAT(VALUES(CASE(ok == 0, entity)), ", ")
-    | EVAL of = CONCAT("of ", TO_STRING(total), " (p95 <= 3 s, errors <= 1 %); breaching: ", COALESCE(breaching, "none")) | KEEP in_slo, of`,
+    | EVAL ok = CASE(p95_ms <= 3000 AND fail_pct <= 2, 1, 0) | STATS in_slo = SUM(ok), total = COUNT(*), breaching = MV_CONCAT(VALUES(CASE(ok == 0, entity)), ", ")
+    | EVAL of = CONCAT("of ", TO_STRING(total), " (p95 <= 3 s, errors <= 2 %); breaching: ", COALESCE(breaching, "none")) | KEEP in_slo, of`,
     [["in_slo", "number", "In SLO"], ["of", "string"]], { metric: "in_slo", secondary: "of" }),
   payErr: esql("secbank-d5-pay-err", "payments-svc error rate", `${TX} AND service.name == "payments-svc"
     | STATS n = SUM(transaction.representative_count), f = SUM(CASE(event.outcome == "failure", transaction.representative_count, 0.0))

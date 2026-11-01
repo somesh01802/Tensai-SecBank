@@ -16,10 +16,10 @@ the Kibana object it needs (SLO, rule, ML job, monitor, case, workflow, agent) d
 
 | Measure | Spec (17:46) | Measured | Note |
 |---|---|---|---|
-| Journey completion | 96.3 % (49,988 of 51,890) | 96.4 % (50,381 of 52,264) | Met |
-| Bill pay health index | 61 | 61 | Met |
-| Bill pay completion | 82.3 % | 84.2 % | close |
-| Journeys healthy | 5 of 10 | 4 of 10 | onboarding and loan apply score below 80 in our model |
+| Journey completion | 96.3 % (49,988 of 51,890) | 96.5 % (50,166 of 52,007) | Met |
+| Bill pay health index | 61 | 61 to 62 (two runs) | Met |
+| Bill pay completion | 82.3 % | 84.9 % | close |
+| Journeys healthy | 5 of 10 | 4 of 10 | index 90+ and no open problem attached (autopay excluded by P2), last 10 min |
 | Open problems | 4 (critical, major, major, minor) | 4, same severities, same order | Met |
 | Problem owners | Payments, Payments, Identity, Branch network | same | Met |
 | Branches online | 39 of 40 | 39 of 40 | Met |
@@ -34,19 +34,19 @@ the Kibana object it needs (SLO, rule, ML job, monitor, case, workflow, agent) d
 | OTP Northeast (P3) | 610 customers, $38.2k | 468 customers, $24.9k | lower |
 | Branch BR-017 delayed (P4) | $9.6k | $9.5k | Met |
 | Customers impacted, last 15 min | 3,990 | 1,360 | see note 1 |
-| Services and deps in SLO | 9 of 12 | 6 of 11 | see note 2 |
+| Services and deps in SLO | 9 of 12 (payments-svc, payment_gw, sms_otp) | 9 of 12, the same three breaching | Met |
 
 1. The spec's 2,140 (S1 alone) is more than every bill pay customer in 15 minutes at the spec's own volumes; the
    simulator matches the hour-level numbers (attempts, completion, health index) instead.
-2. web-ui is not an APM service in the simulation (11 entities, not 12); api-gateway and auth-svc also exceed the
-   3 s p95 / 1 % error bar used here because they sit in front of payments-svc and sms_otp.
+2. SLO bar used on D5: p95 up to 3 s and errors up to 2 %, over 9 services (web-ui included, as a browser agent) and
+   3 external dependencies.
 
 ## D0 Bank Pulse
 
 | Spec panel | Built as | Status |
 |---|---|---|
 | Controls (channel, segment, region, journey) | options list controls, pinned | Met |
-| Journeys healthy | ES|QL metric, index recomputed from additive counts | Met (the "no open problem attached" rule is not applied) |
+| Journeys healthy | ES|QL over the health index and open problems | Met |
 | Customers impacted now | ES|QL, technical failure or step beyond target (LOOKUP JOIN step catalogue), last 15 min | Met |
 | Value at risk this hour | ES|QL: technical failures plus pending past 15 min | Met (delayed autopay/branch value is on the problem cards) |
 | Journey completion | ES|QL metric with "x of y attempts" | Met |
@@ -57,7 +57,7 @@ the Kibana object it needs (SLO, rule, ML job, monitor, case, workflow, agent) d
 | Journey health index, every 2 minutes | Vega-Lite heatmap, follows filters and time | Met |
 | Transactions by channel | ES|QL bar, includes teller and ATM transactions | Met |
 | Customers impacted by segment | ES|QL bar | Met |
-| Journey SLOs burning fastest | ES|QL table on `bank-journey-health` | Fallback (no SLO objects) |
+| Journey SLOs burning fastest | ES|QL table on `bank-journey-health`; the 10 journey SLOs and burn-rate rules exist (setup-kibana.mjs) | Met (panel is ES|QL, not the SLO embeddable) |
 | Open incidents list | ES|QL table on the ranked problems | Fallback (no Cases yet) |
 | Definitions | Markdown | Met |
 
@@ -88,7 +88,7 @@ the Kibana object it needs (SLO, rule, ML job, monitor, case, workflow, agent) d
 |---|---|---|
 | Branches online, teller and ATM transactions, ATMs online | ES|QL metrics (ATMs from heartbeats) | Met |
 | Branch health index | in-person journey completion | Fallback (the index is per journey, not per channel) |
-| Regions with impacted digital customers | ES|QL, regions over 2 % digital technical failures | Met (shows 1 region: the share is computed over all digital journeys) |
+| Regions with impacted digital customers | ES|QL, regions over 2 % technical failures on digital payment journeys | Met (6 of 6) |
 | Branches by region map | Maps panel, one point per branch coloured by region | Met (no region boundary term join) |
 | Active alerts | branch problems | Fallback |
 | Regions table | ES|QL | Met |
@@ -111,7 +111,7 @@ the Kibana object it needs (SLO, rule, ML job, monitor, case, workflow, agent) d
 | Spec panel | Built as | Status |
 |---|---|---|
 | Page views, vitals pass, LCP, INP, CLS | ES|QL on simulated page views | Met (simulated views carry vitals; the real app's RUM is in the User Experience app) |
-| JS errors, JS errors by release | not simulated | Gap |
+| JS errors, JS errors by release | ES|QL on simulated JS errors (0.4 % of views, 3 % after the S4 release) | Met |
 | Synthetic availability | ES|QL, 274 of 288 runs | Fallback |
 | Page experience over time | ES|QL line, LCP p75 against backend p95 | Met (releases table instead of annotations) |
 | Experience against backend gap | ES|QL table by page | Met (table, not a Vega scatter) |
@@ -126,10 +126,10 @@ the Kibana object it needs (SLO, rule, ML job, monitor, case, workflow, agent) d
 | Services in SLO, payments-svc errors and latency, payment_gw latency | ES|QL on `traces-apm*` (10 % sampled, extrapolated) | Met / Fallback (no SLO objects) |
 | Third-party failure share, attribution coverage | ES|QL on business events (98.5 %, 100 %) | Met |
 | Latency per minute | ES|QL line per service | Met |
-| Service map | link to the APM service map (edges come from simulated traces) | Fallback (embeddable not confirmed for 9.5) |
+| Service map | link to the APM service map; edges web-ui → api-gateway → services → dependencies come from simulated traces | Fallback (embeddable not confirmed for 9.5) |
 | Services table, external dependencies | ES|QL tables | Met |
 | Slowest failing traces | Discover session; open one for the waterfall | Met |
-| Correlations, anomaly swimlane, per-service SLO panels | links to APM | Gap (need ML jobs and SLOs) |
+| Correlations, anomaly swimlane | links to APM and ML; ML jobs secbank-payment-gw-latency and others exist | Fallback |
 
 ## D6 Platform
 
@@ -160,7 +160,7 @@ the Kibana object it needs (SLO, rule, ML job, monitor, case, workflow, agent) d
 |---|---|---|
 | Risks open, due within 7 days, with an owner, earliest due | ES|QL on `bank-risks` | Met ("preempted this month" replaced: closed risks are not kept with their due date) |
 | Open predictable risks | ES|QL table (S7: certificate 7 days; S8: notify-svc memory 5.5 h) | Met |
-| notify-svc memory history and forecast | ES|QL line; forecast from a linear fit in `bank-risks` | Fallback (no ML forecast band) |
+| notify-svc memory history and forecast | ES|QL line; linear fit in `bank-risks`; ML job secbank-pod-memory with a 1-day forecast (Single Metric Viewer) | Met |
 | Certificates by days to expiry | ES|QL bar | Met |
 | Error drift after release, third-party trend | ES|QL table and line | Met |
 | Proposals awaiting approval | link to Workflows | Gap |
@@ -199,7 +199,10 @@ the Kibana object it needs (SLO, rule, ML job, monitor, case, workflow, agent) d
 
 1. Run the deployment in MIGRATION.md (Upgrade 0008), then import `kibana/secbank-dashboards.ndjson`.
 2. Optional but recommended: a week of baseline (`--backfill=10080 --scale=0.1`) so ML jobs can learn.
-3. Not built here, needed for the remaining Gap rows: journey SLOs (custom KQL on `logs-bank.business-*`), alert rules,
-   ML jobs (payment_gw latency, autopay volume, branch volume, memory forecast), Synthetics monitors (the app is
-   not reachable from Elastic's hosted locations while ports 80/443 stay closed), Cases with the ServiceNow connector,
-   Workflows with approval, and Agent Builder.
+3. Run `kibana/setup-kibana.mjs` (MIGRATION.md): 10 journey SLOs with burn-rate rules, a rule on open problems,
+   payments-svc error-rate and latency rules, ML jobs for autopay volume, payment_gw latency, branch volume and pod
+   memory. Validated against Kibana 9.5.5 with security on: SLOs compute (bill pay: violated at 84.7 %), the burn-rate
+   rule fires, all four ML jobs open and process data, re-runs are clean.
+4. Still not built: Synthetics monitors (the app is not reachable from Elastic's hosted locations while ports 80/443
+   stay closed; simulated synthetic runs stand in), Cases with the ServiceNow connector, Workflows with approval, and
+   Agent Builder. These are configured in Kibana's own apps.

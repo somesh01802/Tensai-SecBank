@@ -118,7 +118,9 @@ function send(array $rows, bool $dry, ?array $apmOn, array &$counts): int
     foreach ($by['apm'] ?? [] as $docs) {
         $d = $docs[0];
         $meta = ['metadata' => ['service' => ['name' => $d['service'], 'version' => $d['version'], 'environment' => 'production',
-            'agent' => ['name' => 'nodejs', 'version' => '4.7.0'], 'language' => ['name' => 'javascript'], 'runtime' => ['name' => 'node', 'version' => '20.11.1'],
+            // web-ui is the browser (RUM agent); every other service runs the Node.js agent.
+            'agent' => $d['service'] === 'web-ui' ? ['name' => 'rum-js', 'version' => '5.17.5'] : ['name' => 'nodejs', 'version' => '4.7.0'],
+            'language' => ['name' => 'javascript'], ...($d['service'] === 'web-ui' ? [] : ['runtime' => ['name' => 'node', 'version' => '20.11.1']]),
             'node' => ['configured_name' => $d['pod']]],
             'system' => ['kubernetes' => ['namespace' => 'secbank', 'pod' => ['name' => $d['pod']], 'node' => ['name' => $d['node']]]],
             'labels' => ['synthetic_user' => true, 'data_source' => 'simulator']]];
