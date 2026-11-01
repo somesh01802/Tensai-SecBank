@@ -26,10 +26,8 @@ class AuthController
             'SELECT id, email, mobile_number FROM users WHERE email = :e OR mobile_number = :m LIMIT 1',
             [':e' => strtolower($email), ':m' => $mobile]
         );
-        if ($existing) {
-            $reason = $existing['email'] === strtolower($email) ? 'email' : 'mobile number';
-            throw new ApiError("A user with this $reason already exists", 422);
-        }
+        // VAPT-10: same answer whether the email or the mobile number is taken (no account enumeration).
+        if ($existing) throw new ApiError('We could not register with these details. If you already have an account, please sign in.', 422);
 
         $hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 10]);
         // Role is never taken from the request: registration always creates a CUSTOMER.
@@ -51,7 +49,7 @@ class AuthController
         $eventId = $this->track($req, $user, 'register', 'password', 'success');
         $res = Http::json($res, ['user' => self::publicUser($user), 'token' => $token, 'needsMpin' => true,
             'loginEventId' => $eventId, 'userRef' => Apm::userRef($user['id'])], 201);
-        return $this->withAuthCookie($res, $token);
+        return $this->withAuthCookie($req, $res, $token);
     }
 
     public function login(Request $req, Response $res): Response
@@ -67,25 +65,30 @@ class AuthController
         if ($loginAs === 'admin' && $mpin) throw new ApiError('Admin sign-in requires email and password', 400);
         Apm::label('login_as', $loginAs);
 
+        $identifier = $email ? strtolower((string) $email) : (string) $mobile;
+        $ip = self::clientIp($req);
+        self::throttle($identifier, $ip);
+
         $user = Db::one(
             'SELECT * FROM users WHERE email = :e OR mobile_number = :m LIMIT 1',
             [':e' => $email ? strtolower($email) : '___never___', ':m' => $mobile ?: '___never___']
         );
-        if (!$user) throw new ApiError('Credentials are invalid', 401);
-
-        $method = $mpin ? 'mpin' : 'password';
-        if ($mpin) {
-            $v = Mpin::verify($user['id'], $mpin);
-            if (!$v['ok']) {
-                $this->track($req, $user, 'login', $method, 'failure');
-                throw new ApiError($v['message'], 401, isset($v['attemptsRemaining']) ? ['attemptsRemaining' => $v['attemptsRemaining']] : null);
-            }
-        } else {
-            if (!password_verify($password, $user['passwordHash'])) {
-                $this->track($req, $user, 'login', $method, 'failure');
-                throw new ApiError('Credentials are invalid', 401);
-            }
+        if (!$user) {
+            self::failed($identifier, $ip);
+            throw new ApiError('Credentials are invalid', 401);
         }
+
+        // VAPT-10: one message for every failure (unknown user, wrong password, wrong or unset MPIN); a locked MPIN
+        // answers like the throttle, which unknown identifiers also reach.
+        $method = $mpin ? 'mpin' : 'password';
+        $ok = $mpin ? Mpin::verify($user['id'], $mpin) : ['ok' => password_verify((string) $password, $user['passwordHash'])];
+        if (!$ok['ok']) {
+            $this->track($req, $user, 'login', $method, 'failure');
+            self::failed($identifier, $ip);
+            if (str_starts_with($ok['message'] ?? '', 'Account locked')) throw new ApiError(self::TOO_MANY, 429);
+            throw new ApiError('Credentials are invalid', 401);
+        }
+        Db::run('DELETE FROM auth_failures WHERE identifier = :i', [':i' => $identifier]);
 
         // Separation of duties: admins only via the Admin sign-in, customers only via the Customer sign-in.
         $role = $user['role'] ?? 'CUSTOMER';
@@ -107,7 +110,7 @@ class AuthController
             'loginEventId' => $eventId,
             'userRef' => Apm::userRef($user['id']),
         ]);
-        return $this->withAuthCookie($res, $token);
+        return $this->withAuthCookie($req, $res, $token);
     }
 
     private const LOCATION_STATUSES = ['granted', 'denied', 'dismissed', 'unavailable', 'timeout', 'error'];
@@ -156,6 +159,32 @@ class AuthController
         return Http::json($res, ['recorded' => true, 'status' => $status], 201);
     }
 
+    private const TOO_MANY = 'Too many sign-in attempts. Please try again in 15 minutes.';
+    private const MAX_PER_IDENTIFIER = 5;   // failures per email/mobile in 15 min
+    private const MAX_PER_IP = 30;          // failures per client IP in 15 min (credential stuffing)
+
+    /** VAPT-04: refuse sign-in while an identifier or an IP has too many recent failures (known or unknown user alike). */
+    private static function throttle(string $identifier, ?string $ip): void
+    {
+        $r = Db::one("SELECT count(*) FILTER (WHERE identifier = :i) AS by_id, count(*) FILTER (WHERE ip = :ip) AS by_ip
+                      FROM auth_failures WHERE created_at > now() - interval '15 minutes' AND (identifier = :i2 OR ip = :ip2)",
+            [':i' => $identifier, ':ip' => (string) $ip, ':i2' => $identifier, ':ip2' => (string) $ip]);
+        if ((int) $r['byId'] >= self::MAX_PER_IDENTIFIER || (int) $r['byIp'] >= self::MAX_PER_IP)
+            throw new ApiError(self::TOO_MANY, 429);
+    }
+
+    private static function failed(string $identifier, ?string $ip): void
+    {
+        Db::run('INSERT INTO auth_failures (identifier, ip) VALUES (:i, :ip)', [':i' => $identifier, ':ip' => $ip]);
+        Db::run("DELETE FROM auth_failures WHERE created_at < now() - interval '1 day' AND identifier = :i", [':i' => $identifier]);
+    }
+
+    /** The connecting address; Apache sets REMOTE_ADDR to the client (X-Forwarded-For is client-controlled: VAPT-21). */
+    private static function clientIp(Request $req): ?string
+    {
+        return $req->getServerParams()['REMOTE_ADDR'] ?? null;
+    }
+
     private static function publicUser(array $u): array
     {
         return ['id' => $u['id'], 'email' => $u['email'], 'name' => $u['name'],
@@ -199,9 +228,18 @@ class AuthController
     public function setMpin(Request $req, Response $res): Response
     {
         $u = $req->getAttribute('user');
-        $mpin = ((array) $req->getParsedBody())['mpin'] ?? null;
+        $b = (array) $req->getParsedBody();
+        $mpin = $b['mpin'] ?? null;
+        $change = Mpin::has($u['id']);
+        if ($change) {
+            // VAPT-08: replacing an existing MPIN needs the current one (first-time setup does not).
+            $v = Mpin::verify($u['id'], $b['currentMpin'] ?? null);
+            if (!$v['ok']) throw new ApiError('Current MPIN is incorrect', 401);
+        }
         $r = Mpin::set($u['id'], $mpin);
         if (!$r['ok']) throw new ApiError($r['message'], 400);
+        if ($change) \Tensai\Auth::endOtherSessions($u['id'], $req->getAttribute('token'));
+        Audit::log($req, $u['id'], $change ? 'auth.mpin_changed' : 'auth.mpin_set', 'user', $u['id']);
         return Http::json($res, ['message' => 'MPIN saved']);
     }
 
@@ -220,8 +258,7 @@ class AuthController
      */
     private function track(Request $req, array $user, string $event, string $method, string $outcome): ?int
     {
-        $ip = $req->getHeaderLine('X-Forwarded-For')
-            ?: ($req->getServerParams()['REMOTE_ADDR'] ?? null);
+        $ip = self::clientIp($req);
         $eventId = null;
         try {
             $row = Db::one(
@@ -257,9 +294,13 @@ class AuthController
         return $eventId;
     }
 
-    private function withAuthCookie(Response $res, string $token): Response
+    private function withAuthCookie(Request $req, Response $res, string $token): Response
     {
-        $secure = (($_ENV['NODE_ENV'] ?? '') === 'production') ? ' Secure;' : '';
+        // VAPT-17: Secure whenever the request arrived over HTTPS (directly or via the TLS-terminating proxy).
+        $sp = $req->getServerParams();
+        $https = $req->getUri()->getScheme() === 'https' || strtolower((string) ($sp['HTTPS'] ?? '')) === 'on'
+            || strtolower($req->getHeaderLine('X-Forwarded-Proto')) === 'https';
+        $secure = $https ? ' Secure;' : '';
         $maxAge = Token::ttlSeconds();
         $cookie = "token=$token; Path=/; HttpOnly; SameSite=Lax; Max-Age=$maxAge;$secure";
         return $res->withAddedHeader('Set-Cookie', $cookie);

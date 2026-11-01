@@ -22,6 +22,12 @@ class AutopayController
         $b = (array) $req->getParsedBody();
         foreach (['investmentId', 'sourceAccountId', 'amount', 'nextRunAt'] as $k)
             if (empty($b[$k])) throw new ApiError('investmentId, sourceAccountId, amount, nextRunAt required', 400);
+        // VAPT-03: source account and investment must be the caller's own.
+        if (!\Tensai\Ledger::ownedActive($b['sourceAccountId'], $u['id'])) throw new ApiError('Source account not found', 404);
+        if (!\Tensai\Attempts::isUuid($b['investmentId'])
+            || !Db::one('SELECT 1 FROM investments WHERE id = :i AND user_id = :u', [':i' => $b['investmentId'], ':u' => $u['id']]))
+            throw new ApiError('Investment not found', 404);
+        \Tensai\Ledger::amount($b['amount']);
         $row = Db::one(
             'INSERT INTO investment_autopay (user_id, investment_id, source_account_id, amount, frequency, next_run_at, enabled)
              VALUES (:u,:inv,:src,:amt,:f,:nr,true) RETURNING *',

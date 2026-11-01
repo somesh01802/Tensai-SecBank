@@ -78,6 +78,11 @@ class TransferController
         $amount = $b['amount'] ?? null; $nextRunAt = $b['nextRunAt'] ?? null;
         $remarks = $b['remarks'] ?? null; $freq = $b['frequency'] ?? 'ONCE';
         if (!$payeeId || !$src || !$amount || !$nextRunAt) throw new ApiError('payeeId, sourceAccountId, amount, nextRunAt required', 400);
+        // VAPT-03: source account and payee must be the caller's own.
+        if (!Ledger::ownedActive($src, $u['id'])) throw new ApiError('Source account not found', 404);
+        if (!Attempts::isUuid($payeeId) || !Db::one('SELECT 1 FROM payees WHERE id = :p AND user_id = :u', [':p' => $payeeId, ':u' => $u['id']]))
+            throw new ApiError('Payee not found', 404);
+        Ledger::amount($amount);
         $row = Db::one(
             'INSERT INTO scheduled_transfers (user_id, payee_id, source_account_id, amount, remarks, frequency, next_run_at, enabled, status)
              VALUES (:u,:p,:s,:a,:r,:f,:n,true,\'SCHEDULED\') RETURNING *',

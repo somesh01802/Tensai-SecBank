@@ -37,13 +37,17 @@ class TransactionController
     {
         if (!$from || !$to || !$amount || !$key)
             throw new ApiError('fromAccount, toAccount, amount and idempotencyKey are required', 400);
-        $amt = (float) $amount;
-        if (!is_finite($amt) || $amt <= 0) throw new ApiError('amount must be a positive number', 400);
+        if (!is_numeric($amount) || round((float) $amount, 2) < 0.01 || !is_finite((float) $amount))
+            throw new ApiError('amount must be a positive number', 400);
+        $amt = round((float) $amount, 2);
         if ($from === $to) throw new ApiError('Cannot transfer to the same account', 400);
         if (!Attempts::isUuid($from) || !Attempts::isUuid($to)) throw new ApiError('Invalid fromAccount or toAccount', 404);
 
         $existing = Db::one('SELECT * FROM transactions WHERE idempotency_key = :k', [':k' => $key]);
         if ($existing) {
+            // Replays only for the caller's own transaction; never reveal another customer's (VAPT-07).
+            $owner = Db::one('SELECT user_id FROM accounts WHERE id = :a', [':a' => $existing['fromAccountId']]);
+            if (($owner['userId'] ?? null) !== $u['id']) throw new ApiError('Idempotency key already used', 409);
             if ($existing['status'] === 'COMPLETED') return [['message' => 'Transaction already processed', 'transaction' => self::shape($existing)], 200, $existing['id']];
             if ($existing['status'] === 'PENDING') return [['message' => 'Transaction is still processing', 'transaction' => self::shape($existing)], 200, $existing['id']];
             throw new ApiError("Transaction previously {$existing['status']}, retry with a new idempotency key", 409, ['transaction' => self::shape($existing)]);
@@ -63,6 +67,7 @@ class TransactionController
 
         try {
             $completed = Db::tx(function (PDO $pdo) use ($from, $to, $amt, $key, $desc) {
+                \Tensai\Ledger::lock($pdo, $from);   // serialise debits of the source account (VAPT-01)
                 $a = number_format($amt, 2, '.', '');
                 $st = $pdo->prepare("INSERT INTO transactions (from_account_id,to_account_id,amount,status,idempotency_key,description)
                     VALUES (?,?,?,'PENDING',?,?) RETURNING *");
@@ -126,23 +131,31 @@ class TransactionController
         return Http::json($res, ['transactions' => $txs, 'totals' => ['count' => count($txs), 'credit' => $credit, 'debit' => $debit], 'filter' => ['from' => $from, 'to' => $to]]);
     }
 
-    /** POST /api/transactions/receive — deposit into primary. */
+    /**
+     * POST /api/transactions/receive — self-service deposit into primary. Test data only: a deposit with no
+     * counter-party creates money, so real customers are refused (VAPT-02); synthetic (test) users keep it for
+     * demos and load tests. Real money arrives by transfer from another account.
+     */
     public function receive(Request $req, Response $res): Response
     {
         $u = $req->getAttribute('user');
+        if (($u['isSynthetic'] ?? false) !== true)
+            throw new ApiError('Self-service deposits are not available. Money arrives by transfer from another account.', 403);
         $b = (array) $req->getParsedBody();
         $amount = $b['amount'] ?? null; $key = $b['idempotencyKey'] ?? null;
         $remarks = $b['remarks'] ?? null; $src = $b['sourceInfo'] ?? null;
         if (!$amount || !$key) throw new ApiError('amount and idempotencyKey are required', 400);
-        $amt = (float) $amount;
-        if (!is_finite($amt) || $amt <= 0) throw new ApiError('amount must be positive', 400);
+        $amt = \Tensai\Ledger::amount($amount);
         if ($amt > 100000000) throw new ApiError('amount exceeds allowed limit', 400);
-
-        $dup = Db::one('SELECT * FROM transactions WHERE idempotency_key = :k', [':k' => $key]);
-        if ($dup) return Http::json($res, ['message' => 'Already credited', 'transaction' => self::shape($dup)]);
 
         $primary = Db::one('SELECT * FROM accounts WHERE user_id = :u AND is_primary = true LIMIT 1', [':u' => $u['id']]);
         if (!$primary) throw new ApiError('No primary account found', 400);
+
+        $dup = Db::one('SELECT * FROM transactions WHERE idempotency_key = :k', [':k' => $key]);
+        if ($dup) {
+            if ($dup['toAccountId'] !== $primary['id']) throw new ApiError('Idempotency key already used', 409);   // VAPT-07
+            return Http::json($res, ['message' => 'Already credited', 'transaction' => self::shape($dup)]);
+        }
         if ($primary['status'] !== 'ACTIVE') throw new ApiError('Primary account is not active', 400);
 
         $desc = $remarks ? ('Received: ' . $remarks . ($src ? ' · from ' . $src : '')) : ('Deposit' . ($src ? ' from ' . $src : ''));
@@ -167,9 +180,12 @@ class TransactionController
         $to = $b['toAccount'] ?? null; $amount = $b['amount'] ?? null; $key = $b['idempotencyKey'] ?? null;
         if (!$to || !$amount || !$key) throw new ApiError('toAccount, amount and idempotencyKey are required', 400);
 
+        // VAPT-26: positive amount, existing ACTIVE target account.
+        $amt = number_format(\Tensai\Ledger::amount($amount), 2, '.', '');
+        $target = Attempts::isUuid($to) ? Db::one('SELECT id FROM accounts WHERE id = :a AND status = \'ACTIVE\'', [':a' => $to]) : null;
+        if (!$target) throw new ApiError('toAccount not found', 404);
         $sys = Db::one('SELECT * FROM accounts WHERE user_id = :u LIMIT 1', [':u' => $u['id']]);
         if (!$sys) $sys = Db::one('INSERT INTO accounts (user_id) VALUES (:u) RETURNING *', [':u' => $u['id']]);
-        $amt = number_format((float) $amount, 2, '.', '');
 
         $completed = Db::tx(function (PDO $pdo) use ($sys, $to, $amt, $key) {
             $st = $pdo->prepare("INSERT INTO transactions (from_account_id,to_account_id,amount,status,idempotency_key) VALUES (?,?,?,'COMPLETED',?) RETURNING *");
@@ -255,6 +271,8 @@ class TransactionController
     private static function csv($v): string
     {
         $s = (string) ($v ?? '');
+        // Formula injection (VAPT-14): a leading = + - @ tab or CR would run as a spreadsheet formula.
+        if (preg_match('/^[=+\-@\t\r]/', $s)) $s = "'" . $s;
         return preg_match('/[",\n]/', $s) ? '"' . str_replace('"', '""', $s) . '"' : $s;
     }
 }

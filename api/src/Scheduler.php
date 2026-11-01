@@ -24,6 +24,7 @@ class Scheduler
         foreach ($due as $a) {
             $idem = 'autopay-' . $a['id'] . '-' . self::iso($a['nextRunAt']);
             try {
+                self::assertOwner($a['sourceAccountId'], $a['userId']);
                 $tx = Ledger::debit($a['sourceAccountId'], $a['amount'], $idem, 'Investment AutoPay', 'INVESTMENTS');
                 Db::run('INSERT INTO investment_autopay_runs (autopay_id, amount, status, transaction_id) VALUES (:i,:a,\'SUCCESS\',:t)',
                     [':i' => $a['id'], ':a' => $a['amount'], ':t' => $tx['id']]);
@@ -51,6 +52,7 @@ class Scheduler
             try {
                 $txId = null;
                 if ($b['autopayEnabled'] && $b['sourceAccountId']) {
+                    self::assertOwner($b['sourceAccountId'], $b['userId']);
                     $tx = Ledger::debit($b['sourceAccountId'], $effective, $idem, 'Recurring bill · ' . $b['billerName'], $b['category']);
                     $txId = $tx['id'];
                 }
@@ -81,6 +83,7 @@ class Scheduler
             $idem = 'sched-' . $s['id'] . '-' . self::iso($s['nextRunAt']);
             $ranStatus = 'FAILED';
             try {
+                self::assertOwner($s['sourceAccountId'], $s['userId']);
                 $tx = Ledger::debit($s['sourceAccountId'], $s['amount'], $idem, $s['remarks'] ?: 'Scheduled transfer', 'TRANSFER_EXTERNAL');
                 Db::run('INSERT INTO scheduled_transfer_runs (scheduled_transfer_id, amount, status, transaction_id) VALUES (:i,:a,\'SUCCESS\',:t)',
                     [':i' => $s['id'], ':a' => $s['amount'], ':t' => $tx['id']]);
@@ -96,6 +99,12 @@ class Scheduler
                 [':n' => $next ?? $s['nextRunAt'], ':e' => $next ? 'true' : 'false',
                  ':s' => $next ? 'SCHEDULED' : $ranStatus, ':i' => $s['id']]);
         }
+    }
+
+    /** Defence in depth (VAPT-03): a scheduled item may only debit an ACTIVE account of the user who created it. */
+    private static function assertOwner($accountId, $userId): void
+    {
+        if (!Ledger::ownedActive($accountId, $userId)) throw new ApiError('Source account not owned by the schedule owner', 403);
     }
 
     private static function iso($ts): string { return date('c', strtotime((string) $ts)); }

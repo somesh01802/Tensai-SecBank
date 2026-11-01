@@ -54,7 +54,14 @@ function app(): \Slim\App
         $res = $req->getMethod() === 'OPTIONS'
             ? (new \Slim\Psr7\Response())->withStatus(204)
             : $h->handle($req);
+        header_remove('X-Powered-By');   // VAPT-13: no version disclosure
         return $res
+            // VAPT-13: API responses are data, never pages: no rendering, framing, sniffing or caching.
+            ->withHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'")
+            ->withHeader('X-Content-Type-Options', 'nosniff')
+            ->withHeader('X-Frame-Options', 'DENY')
+            ->withHeader('Referrer-Policy', 'no-referrer')
+            ->withHeader('Cache-Control', 'no-store')
             ->withHeader('Access-Control-Allow-Origin', $allow)
             ->withHeader('Access-Control-Allow-Credentials', 'true')
             // traceparent/tracestate/elastic-apm-traceparent let the browser RUM

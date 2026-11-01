@@ -261,3 +261,30 @@ Elasticsearch (only if the SecBank data must go; deletes simulated data and the 
 `DELETE _data_stream/logs-bank.*,metrics-bank.*` then `DELETE bank-*` and `DELETE _index_template/logs-bank.*,metrics-bank.*`.
 Kibana: `sudo node kibana/setup-kibana.mjs --remove` (SLOs, rules, ML jobs), then Saved Objects → search `secbank` →
 select all → Delete; Canvas → delete `SecBank wallboard`.
+
+---
+
+# Upgrade 0009: security fixes from the VAPT (2 November 2026)
+
+Ships with the 0008 release; the same `sudo php api/bin/migrate.php` applies `0009_security.sql` (additive: tables
+`auth_failures`, `rate_limits`; columns `users.sessions_valid_after`, `users.session_keep_hash`). Run the migration
+before restarting php-fpm: the new code reads those columns on every authenticated request.
+
+Behaviour changes: real customers can no longer self-deposit ("Receive money" answers with a message; test users
+unchanged); sign-in pauses 15 minutes after 5 failures per email/mobile or 30 per IP; generic registration message;
+password or MPIN change signs out other devices; a bill is only paid from an account.
+
+Security headers for the SPA (the API sets its own). Add inside the `tensai-secbank.conf` vhost, then
+`sudo a2enmod headers && sudo apachectl configtest && sudo systemctl reload apache2`:
+```apache
+Header always set X-Content-Type-Options "nosniff"
+Header always set X-Frame-Options "DENY"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://*.cloud.es.io:443; frame-ancestors 'none'"
+# After TLS is enabled only:
+# Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+```
+Check `connect-src` against the RUM server URL in `frontend/.env` before enabling the CSP (a wrong origin only stops RUM
+data, the app keeps working). Verify: `php api/tests/security.php --base=<staging URL> --allow-writes` on staging only.
+
+Rollback: revert the code, then optionally `psql ... -f api/migrations/rollback/0009_security.down.sql`.

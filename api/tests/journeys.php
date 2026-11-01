@@ -65,7 +65,7 @@ check('device/browser/channel parsed', $last['device'] === 'desktop' && $last['b
 // Successful bill pay emits confirm_payment + receipt (completed).
 [, $b2] = call('POST', '/bills', ['billerName' => 'Journey Water', 'category' => 'WATER', 'amount' => 1], $tok);
 $jid2 = uuid();
-[$c, $paid] = call('POST', '/bills/' . ($b2['bill']['id'] ?? '') . '/pay', [], $tok, ["X-Journey-Id: $jid2", 'X-Channel: partner_api']);
+[$c, $paid] = call('POST', '/bills/' . ($b2['bill']['id'] ?? '') . '/pay', ['fromAccountId' => $acc], $tok, ["X-Journey-Id: $jid2", 'X-Channel: partner_api']);
 $ev2 = events($jid2);
 check('successful bill pay -> confirm_payment + receipt completed', $c === 200 && array_column($ev2, 'step') === ['confirm_payment', 'receipt']
     && end($ev2)['status'] === 'completed', "http $c " . json_encode(array_column($ev2, 'step')));

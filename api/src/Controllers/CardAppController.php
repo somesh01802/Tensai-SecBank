@@ -99,6 +99,7 @@ class CardAppController
         $u = $req->getAttribute('user');
         $c = Db::one('SELECT * FROM cards WHERE id = :i AND user_id = :u LIMIT 1', [':i' => $args['id'], ':u' => $u['id']]);
         if (!$c) throw new ApiError('Card not found', 404);
+        \Tensai\Audit::log($req, $u['id'], 'card.revealed', 'card', $c['id']);   // VAPT-25
         Rewards::award($u['id'], 'card.number.revealed');
         Rewards::award($u['id'], 'card.cvv.revealed');
         return Http::json($res, [

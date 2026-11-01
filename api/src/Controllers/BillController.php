@@ -41,6 +41,8 @@ class BillController
                 if (!$bill) throw new ApiError('Bill not found', 404);
                 $meta += ['amount' => $bill['amount'], 'category' => $bill['category'], 'target' => $bill['billerName']];
                 if ($bill['status'] === 'PAID') return [['message' => 'Bill already paid', 'bill' => $bill], 200, $bill['paidTxId'] ?? null];
+                // VAPT-19: a bill is only PAID when money actually moves.
+                if (!$from) throw new ApiError('Choose the account to pay from', 400);
 
                 $paidTxId = null;
                 if ($from) {

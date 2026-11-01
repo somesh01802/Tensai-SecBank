@@ -33,6 +33,8 @@ class ProfileController
             if (str_contains($e->getMessage(), 'users_email_unique')) throw new ApiError('Email already in use', 409);
             throw $e;
         }
+        \Tensai\Audit::log($req, $u['id'], 'profile.updated', 'user', $u['id'],
+            ['fields' => array_values(array_intersect(['name', 'email'], array_keys($b))), 'emailChanged' => isset($params[':e']) && $params[':e'] !== $u['email']]);
         return Http::json($res, ['profile' => $row]);
     }
 
@@ -48,6 +50,8 @@ class ProfileController
         if (!password_verify($cur, $row['passwordHash'])) throw new ApiError('Current password is incorrect', 401);
         $hash = password_hash($new, PASSWORD_BCRYPT, ['cost' => 10]);
         Db::run('UPDATE users SET password_hash = :h, updated_at = now() WHERE id = :id', [':h' => $hash, ':id' => $u['id']]);
+        \Tensai\Auth::endOtherSessions($u['id'], $req->getAttribute('token'));   // VAPT-09: other sessions end here
+        \Tensai\Audit::log($req, $u['id'], 'auth.password_changed', 'user', $u['id']);
         return Http::json($res, ['message' => 'Password changed']);
     }
 }

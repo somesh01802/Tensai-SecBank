@@ -3,14 +3,11 @@ namespace Tensai\Controllers;
 
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Psr\Http\Message\ResponseInterface as Response;
-use Tensai\{Http, Chatbot};
+use Tensai\{Db, Http, Chatbot};
 
 class ChatbotController
 {
-    /** Per-user in-memory rate limit: 30 requests / 60s (single-instance demo). */
-    // ponytail: static resets per PHP-FPM request so this is best-effort only; add APCu/Redis if real throttling matters.
-    private static array $buckets = [];
-
+    /** Per-user rate limit: 30 requests / 60 s, counted in PostgreSQL so every php-fpm worker shares it (VAPT-15). */
     public function ask(Request $req, Response $res): Response
     {
         $u = $req->getAttribute('user');
@@ -27,14 +24,14 @@ class ChatbotController
         }
     }
 
-    private static function rateLimited(string $key): bool
+    private static function rateLimited(string $userId): bool
     {
-        $now = microtime(true) * 1000;
-        $b = self::$buckets[$key] ?? null;
-        if (!$b || $now - $b['start'] > 60000) $b = ['start' => $now, 'count' => 0];
-        if ($b['count'] >= 30) { self::$buckets[$key] = $b; return true; }
-        $b['count']++;
-        self::$buckets[$key] = $b;
-        return false;
+        // One atomic upsert: a new 60 s window starts when the previous one has expired.
+        $row = Db::one("INSERT INTO rate_limits (key, window_start, hits) VALUES (:k, now(), 1)
+            ON CONFLICT (key) DO UPDATE SET
+              hits = CASE WHEN rate_limits.window_start < now() - interval '60 seconds' THEN 1 ELSE rate_limits.hits + 1 END,
+              window_start = CASE WHEN rate_limits.window_start < now() - interval '60 seconds' THEN now() ELSE rate_limits.window_start END
+            RETURNING hits", [':k' => 'chatbot:' . $userId]);
+        return (int) $row['hits'] > 30;
     }
 }

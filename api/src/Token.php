@@ -32,7 +32,8 @@ class Token
     {
         $now = time();
         $header = self::b64(json_encode(['alg' => 'HS256', 'typ' => 'JWT']));
-        $payload = self::b64(json_encode(['userId' => $userId, 'iat' => $now, 'exp' => $now + self::TTL_DAYS * 86400]));
+        $payload = self::b64(json_encode(['userId' => $userId, 'iat' => $now, 'exp' => $now + self::TTL_DAYS * 86400,
+            'iatMs' => (int) floor(microtime(true) * 1000)]));
         $sig = self::b64(hash_hmac('sha256', "$header.$payload", self::secret(), true));
         return "$header.$payload.$sig";
     }
@@ -51,6 +52,13 @@ class Token
         if (!is_array($claims)) return null;
         if (isset($claims['exp']) && time() >= (int) $claims['exp']) return null;
         return $claims['userId'] ?? null;
+    }
+
+    /** Issue time in milliseconds of a token verify() has accepted; older tokens only have whole seconds (0 if absent). */
+    public static function issuedAtMs(string $jwt): int
+    {
+        $claims = json_decode(self::unb64(explode('.', $jwt)[1] ?? ''), true);
+        return (int) ($claims['iatMs'] ?? ((int) ($claims['iat'] ?? 0)) * 1000);
     }
 
     public static function ttlSeconds(): int
