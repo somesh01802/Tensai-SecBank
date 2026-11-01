@@ -49,6 +49,7 @@ class Auth
         // Attribute this request's APM transaction to the user (user.* in Kibana).
         Apm::setUser($user['id'], $user['name'], $user['email'] ?? null);
         Apm::correlate($req, $user);
+        Journey::$user = $user;
 
         $req = $req->withAttribute('user', $user)->withAttribute('token', $token);
         return $handler->handle($req);

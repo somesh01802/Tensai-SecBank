@@ -131,6 +131,7 @@ final class Attempts
         $ms = (int) round((hrtime(true) - $t0) / 1e6);
         $amount = $meta['amount'] ?? null;
         $amount = (is_numeric($amount) && is_finite((float) $amount) && abs((float) $amount) < 1e15) ? number_format((float) $amount, 2, '.', '') : null;
+        Journey::$ctx += ['amount' => $amount, 'category' => $cat, 'attemptId' => $id];
         Apm::label('txn_outcome', strtolower($outcome));
         Apm::label('error_category', $cat);
         try {

@@ -110,6 +110,13 @@ return function (App $app): void {
         $g->get('/cards', [$card, 'list'])->add($auth);
         $g->post('/cards', [$card, 'create'])->add($auth);
         $g->post('/cards/{id}/freeze', [$card, 'freeze'])->add($auth);
+        $g->post('/cards/{id}/pay', [$card, 'pay'])->add($auth);
+
+        // ---- disputes + journey funnel steps (0008) ----
+        $disp = new \Tensai\Controllers\DisputeController();
+        $g->get('/disputes', [$disp, 'list'])->add($auth);
+        $g->post('/disputes', [$disp, 'create'])->add($auth);
+        $g->post('/journey/step', [new \Tensai\Controllers\JourneyController(), 'step'])->add($auth);
         $g->delete('/cards/{id}', [$card, 'delete'])->add($auth);
 
         // ---- bills ----

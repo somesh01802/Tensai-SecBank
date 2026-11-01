@@ -246,6 +246,7 @@ class AuthController
         } catch (\Throwable $e) { /* ignore */ }
 
         Apm::setUser($user['id'], $user['name'], $user['email'] ?? null);
+        \Tensai\Journey::$user = $user;
         Apm::name('POST /api/auth/' . $event);
         Apm::label('auth.event', $event);
         Apm::label('auth.method', $method);

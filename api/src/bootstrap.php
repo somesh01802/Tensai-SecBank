@@ -41,7 +41,10 @@ function app(): \Slim\App
         return Http::json($res, ['message' => 'Internal server error'], 500);
     });
 
-    // CORS — added LAST so it is the outermost middleware: preflights and
+    // Journey step events: outside the error handler so failures are recorded with their final status.
+    $app->add(new Journey());
+
+    // CORS— added LAST so it is the outermost middleware: preflights and
     // error responses (401/400/404 built by the error handler above) also get
     // the headers. Reflects an allowed origin and allows credentials.
     $origins = array_map('trim', explode(',', $_ENV['CORS_ORIGIN'] ?? 'http://localhost:5173,http://localhost:8088'));
@@ -57,7 +60,7 @@ function app(): \Slim\App
             // traceparent/tracestate/elastic-apm-traceparent let the browser RUM
             // agent correlate its transaction with the PHP backend (distributed tracing).
             // X-Session-Id: login-session correlation. X-Tensai-Fault: synthetic-only fault injection (ignored for real users).
-            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, traceparent, tracestate, elastic-apm-traceparent, X-Session-Id, X-Tensai-Fault')
+            ->withHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, traceparent, tracestate, elastic-apm-traceparent, X-Session-Id, X-Tensai-Fault, X-Journey-Id, X-Channel')
             ->withHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS')
             ->withHeader('Access-Control-Max-Age', '600')
             ->withAddedHeader('Vary', 'Origin');
