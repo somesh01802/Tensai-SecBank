@@ -23,10 +23,30 @@ RestartSec=5
 RestartPreventExitStatus=75
 User=www-data
 Nice=10
-# Hardening (VAPT-29): no privilege gain, read-only /usr /boot /etc, no access to /home.
+# Hardening (VAPT-29): no privilege gain, read-only /usr /boot /etc, no /home, no devices or kernel
+# settings, no new namespaces or capabilities, network + local sockets only, the usual service syscalls.
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0027
+# Not MemoryDenyWriteExecute: PHP's PCRE JIT needs writable+executable memory.
 # No PrivateTmp: the --stop switch file lives in the shared /tmp.
 
 [Install]

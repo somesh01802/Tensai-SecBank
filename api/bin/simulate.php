@@ -31,6 +31,9 @@ $dry = isset($o['dry-run']);
 $seed = (int) ($o['seed'] ?? 1);
 $scale = (float) ($o['scale'] ?? 1.0);
 if (!$dry && (!Es::env('ES_URL') || !Es::env('ES_BANK_API_KEY'))) { fwrite(STDERR, "ES_URL and ES_BANK_API_KEY must be set (api/.env)\n"); exit(1); }
+if (!$dry && !array_intersect_key($o, ['start' => 1, 'stop' => 1, 'list' => 1]) && !BankExport::ready()) {
+    fwrite(STDERR, "SecBank indices not set up yet: run bin/setup-elastic.php first\n"); exit(1);
+}
 
 /** APM intake target: .env override, else the PHP agent's own settings. [url, 'Bearer <token>' | 'ApiKey <key>' | null] or null. */
 function apmConfig(): ?array

@@ -208,6 +208,10 @@ sudo -u www-data php bin/simulate.php --ai-history=60                      # D9 
 Optional, a week of quiet baseline so ML jobs have history (about 30 minutes to send; run once, before any demo):
 `sudo -u www-data php -d memory_limit=1G bin/simulate.php --backfill=10080 --scale=0.1 --run=none --seed=7`
 
+`setup-elastic.php` must create the templates before anything writes to `logs-bank.*` / `bank-*`; otherwise
+Elasticsearch guesses field types and the ES|QL panels fail. The exporter and simulator now skip those writes until
+setup has run (`bank-journeys` exists).
+
 Kibana: **Stack Management → Saved Objects → Import** `kibana/secbank-dashboards.ndjson` ("Check for existing
 objects", overwrite). Only `secbank-*` objects and the `SecBank wallboard` workpad are created.
 

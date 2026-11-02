@@ -244,7 +244,9 @@ $failed += export('tensai-login-events', "
     $dry);
 
 // SecBank dashboards (logs-bank.* / bank-*, separate key). Run bin/setup-elastic.php once first.
-if (envv('ES_BANK_API_KEY')) {
+if (envv('ES_BANK_API_KEY') && !BankExport::ready()) {
+    echo "[export] SecBank indices not set up yet (run bin/setup-elastic.php): logs-bank.* / bank-* skipped\n";
+} elseif (envv('ES_BANK_API_KEY')) {
     $failed += BankExport::customers($cutoff, $dry);
     $failed += BankExport::events($cutoff, $dry);
 }

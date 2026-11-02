@@ -169,6 +169,15 @@ final class BankExport
         self::seedLookups();
     }
 
+    /**
+     * True once setup() has run (bank-journeys is created after every template). Writers check it first: a write before
+     * the templates exist auto-creates logs-bank.* / bank-* with guessed types that ES|QL then cannot query.
+     */
+    public static function ready(): bool
+    {
+        return Es::req('GET', '/bank-journeys/_mapping', '', self::K)[0] === 200;
+    }
+
     /** Simulator customers -> bank-customers lookup (they exist only in Elasticsearch). */
     public static function simCustomers(array $customers): int
     {
