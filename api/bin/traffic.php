@@ -204,6 +204,9 @@ function journey(int $i): void
     foreach (array_slice($browse, 0, mt_rand(2, 5)) as $p) call('GET', $p, null, $t);
     $src = $u['accountId'] ?? null;
     if (!$src) return;
+    // External transfers and bills move money out of the pool; refill a drained test account (deposit is synthetic-only, VAPT-02).
+    if ($balance < 1000 && call('POST', '/transactions/receive', ['amount' => 5000, 'idempotencyKey' => uuid(), 'remarks' => 'Load-test top-up'], $t)[0] === 201)
+        $balance += 5000;
 
     $mode = failureMode();
     $headers = in_array($mode, INJECTED_FAILURES, true) ? ['X-Tensai-Fault: ' . $mode] : [];
