@@ -45,6 +45,16 @@ const human = (name) => {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
+// Display label for a journey (underscores -> spaces, each word capitalised; P2P stays upper).
+// Display only: the stored journey.name key is unchanged, so every filter, LOOKUP JOIN and SORT keeps working.
+// Unknown names fall through to the raw value (never null, never fabricated).
+const JDISPLAY = {
+  login: "Login", onboarding: "Onboarding", view_accounts: "View Accounts", bill_pay: "Bill Pay",
+  autopay_setup: "Autopay Setup", p2p_transfer: "P2P Transfer", card_payment: "Card Payment",
+  card_controls: "Card Controls", loan_apply: "Loan Apply", dispute: "Dispute",
+}
+const JNAME = (f) => `CASE(${Object.entries(JDISPLAY).map(([k, v]) => `${f} == "${k}", "${v}"`).join(", ")}, ${f})`
+
 /**
  * ES|QL Lens panel. cols = [[name, type, label?]] in output order; vis = how to draw them:
  *   { metric: v [, secondary] } | { xy: "line"|"area"|"bar"|"bar_horizontal"|"bar_stacked"|"area_stacked", x, y: [..], split }
@@ -236,8 +246,8 @@ const d0 = {
   scorecard: esql("secbank-d0-scorecard", "Journey scorecard", `FROM bank-journey-health ${JHI}
     | EVAL completion_pct = ROUND(100.0 * done / n, 1), burn_rate = ROUND((1 - TO_DOUBLE(done) / n) / (1 - slo / 100.0), 1),
       status = CASE(jhi >= 90, "Healthy", jhi >= 80, "Watch", "Critical")
-    | SORT jhi ASC | KEEP journey.name, jhi, n, completion_pct, burn_rate, status
-    | RENAME journey.name AS journey, jhi AS health_index, n AS attempts`,
+    | SORT jhi ASC | EVAL journey = ${JNAME("journey.name")} | KEEP journey, jhi, n, completion_pct, burn_rate, status
+    | RENAME jhi AS health_index, n AS attempts`,
     [["journey", "string"], ["health_index", "number"], ["attempts", "number"], ["completion_pct", "number"], ["burn_rate", "number", "SLO burn rate"], ["status", "string"]],
     { table: true, colorBy: { health_index: bands([80, 90, 100]) } }),
   varTrend: esql("secbank-d0-var-trend", "Value at risk per minute (USD)", `FROM ${BIZ} | WHERE event.category == "journey" AND ${NOLOAD}
@@ -257,7 +267,7 @@ const d0 = {
     | STATS n = SUM(health.attempts), done = SUM(health.completed), slo = MAX(health.slo_completion_pct) BY journey.name
     | EVAL burn_rate = ROUND((1 - TO_DOUBLE(done) / n) / (1 - slo / 100.0), 1),
       status = CASE(burn_rate >= 14.4, "Violated", burn_rate >= 2, "Degrading", "Healthy"), slo_pct = slo
-    | SORT burn_rate DESC | LIMIT 5 | KEEP journey.name, slo_pct, burn_rate, status | RENAME journey.name AS slo`,
+    | SORT burn_rate DESC | LIMIT 5 | EVAL slo = ${JNAME("journey.name")} | KEEP slo, slo_pct, burn_rate, status`,
     [["slo", "string"], ["slo_pct", "number"], ["burn_rate", "number"], ["status", "string"]],
     { table: true, colorBy: { burn_rate: bands([2, 14.4, 1000], [COL.good, COL.watch, COL.bad], 1000) } }),
   openList: esql("secbank-d0-open", "Open business incidents, by severity then value at risk", `FROM bank-problem-rank | WHERE kind == "problem"
@@ -336,8 +346,8 @@ const d1 = {
     [["attempts", "number"], ["journey.reason_code", "string", "Reason"], ["journey.failure_class", "string", "Class"]],
     { xy: "bar_horizontal", x: "journey.reason_code", y: ["attempts"], split: "journey.failure_class" }),
   parts: esql("secbank-d1-parts", "Why the health index is what it is (C, A, E, X)", `FROM bank-journey-health ${JHI}
-    | KEEP journey.name, jhi, c, a, e, x | EVAL c = ROUND(c * 100), a = ROUND(a * 100), e = ROUND(e * 100), x = ROUND(x * 100) | SORT jhi`,
-    [["journey.name", "string", "Journey"], ["jhi", "number", "Health index"], ["c", "number", "C completion"], ["a", "number", "A Apdex"],
+    | EVAL journey = ${JNAME("journey.name")} | KEEP journey, jhi, c, a, e, x | EVAL c = ROUND(c * 100), a = ROUND(a * 100), e = ROUND(e * 100), x = ROUND(x * 100) | SORT jhi`,
+    [["journey", "string", "Journey"], ["jhi", "number", "Health index"], ["c", "number", "C completion"], ["a", "number", "A Apdex"],
       ["e", "number", "E errors"], ["x", "number", "X experience"]],
     { table: true, colorBy: Object.fromEntries(["jhi", "c", "a", "e", "x"].map((k) => [k, bands([80, 90, 100])])) }),
   slo: esql("secbank-d1-slo", "Completion SLO: burn rate by window", `FROM bank-journey-health
@@ -346,8 +356,8 @@ const d1 = {
       slo = MAX(health.slo_completion_pct) BY journey.name
     | EVAL completion_pct = ROUND(100.0 * d1h / n1h, 1), burn_window = ROUND((1 - TO_DOUBLE(d1h) / n1h) / (1 - slo / 100.0), 1),
       burn_5m = ROUND((1 - TO_DOUBLE(d5) / n5) / (1 - slo / 100.0), 1) | SORT burn_window DESC
-    | KEEP journey.name, slo, completion_pct, burn_window, burn_5m`,
-    [["journey.name", "string", "Journey"], ["slo", "number", "SLO %"], ["completion_pct", "number"], ["burn_window", "number", "Burn (time range)"],
+    | EVAL journey = ${JNAME("journey.name")} | KEEP journey, slo, completion_pct, burn_window, burn_5m`,
+    [["journey", "string", "Journey"], ["slo", "number", "SLO %"], ["completion_pct", "number"], ["burn_window", "number", "Burn (time range)"],
       ["burn_5m", "number", "Burn (5 min)"]], { table: true, colorBy: { burn_5m: bands([2, 14.4, 1000], [COL.good, COL.watch, COL.bad], 1000) } }),
   steps: esql("secbank-d1-steps", "Step latency against target", `${JEV} AND journey.step_duration_ms IS NOT NULL
     | STATS p95_ms = ROUND(PERCENTILE(journey.step_duration_ms, 95)), attempts = COUNT(*) BY journey.step_key
@@ -509,9 +519,9 @@ const d3 = {
   experience: esql("secbank-d3-experience", "Experience", `FROM ${BIZ} | WHERE event.category == "page_view"
     | STATS views = COUNT(*), lcp_p75 = ROUND(PERCENTILE(page.lcp_ms, 75)), inp_p75 = ROUND(PERCENTILE(page.inp_ms, 75)), pass_pct = ROUND(AVG(CASE(page.vitals_pass, 100.0, 0.0)), 1)`,
     [["views", "number", "Page views"], ["lcp_p75", "number", "LCP p75 ms"], ["inp_p75", "number", "INP p75 ms"], ["pass_pct", "number", "Vitals pass %"]], { table: true }),
-  trail: esql("secbank-d3-trail", "Journey trail", `${JEV} | SORT @timestamp DESC | LIMIT 100
-    | KEEP @timestamp, journey.name, journey.step, journey.status, journey.reason_code, journey.step_duration_ms, bank.txn.amount, bank.channel, trace.id, journey.id`,
-    [["@timestamp", "date", "Time"], ["journey.name", "string", "Journey"], ["journey.step", "string", "Step"], ["journey.status", "string", "Status"],
+  trail: esql("secbank-d3-trail", "Journey trail", `${JEV} | SORT @timestamp DESC | LIMIT 100 | EVAL journey = ${JNAME("journey.name")}
+    | KEEP @timestamp, journey, journey.step, journey.status, journey.reason_code, journey.step_duration_ms, bank.txn.amount, bank.channel, trace.id, journey.id`,
+    [["@timestamp", "date", "Time"], ["journey", "string", "Journey"], ["journey.step", "string", "Step"], ["journey.status", "string", "Status"],
       ["journey.reason_code", "string", "Reason"], ["journey.step_duration_ms", "number", "Step ms"], ["bank.txn.amount", "number", "Amount"],
       ["bank.channel", "string", "Channel"], ["trace.id", "string", "Trace"], ["journey.id", "string", "Journey id"]], { table: true }),
   failures: search("secbank-d3-failures", "Failed steps for this customer (Discover)", "biz",
@@ -569,14 +579,15 @@ const d4 = {
       real = CASE(event.category == "journey", 1, 0), real_done = CASE(journey.status == "completed", 1, 0)
     | STATS runs = SUM(synth), up = SUM(synth_up), attempts = SUM(real), done = SUM(real_done) BY journey.name | WHERE runs > 0
     | EVAL synthetic_pct = ROUND(100.0 * up / runs, 1), real_user_pct = ROUND(100.0 * done / attempts, 1) | SORT synthetic_pct
-    | KEEP journey.name, synthetic_pct, real_user_pct, runs, attempts`,
-    [["journey.name", "string", "Journey"], ["synthetic_pct", "number", "Synthetic pass %"], ["real_user_pct", "number", "Real-user completion %"],
+    | EVAL journey = ${JNAME("journey.name")} | KEEP journey, synthetic_pct, real_user_pct, runs, attempts`,
+    [["journey", "string", "Journey"], ["synthetic_pct", "number", "Synthetic pass %"], ["real_user_pct", "number", "Real-user completion %"],
       ["runs", "number", "Synthetic runs"], ["attempts", "number", "Real attempts"]],
     { table: true, colorBy: { synthetic_pct: bands([90, 99, 100.1]), real_user_pct: bands([90, 97, 100.1]) } }),
   partner: esql("secbank-d4-partner", "Partner API: the digital agent user", `${JEV} AND bank.channel == "partner_api" AND ${TERMINAL}
     | STATS attempts = COUNT(*), done = SUM(CASE(journey.status == "completed", 1, 0)), p95_ms = ROUND(PERCENTILE(journey.duration_ms, 95)) BY journey.name
-    | EVAL completion_pct = ROUND(100.0 * done / attempts, 1) | SORT attempts DESC | KEEP journey.name, attempts, completion_pct, p95_ms`,
-    [["journey.name", "string", "Journey"], ["attempts", "number"], ["completion_pct", "number"], ["p95_ms", "number", "p95 ms"]], { table: true }),
+    | EVAL completion_pct = ROUND(100.0 * done / attempts, 1) | SORT attempts DESC
+    | EVAL journey = ${JNAME("journey.name")} | KEEP journey, attempts, completion_pct, p95_ms`,
+    [["journey", "string", "Journey"], ["attempts", "number"], ["completion_pct", "number"], ["p95_ms", "number", "p95 ms"]], { table: true }),
   jsErrors: esql("secbank-d4-js-errors", "JS errors", `FROM ${BIZ} | WHERE event.category IN ("page_view", "js_error")
     | STATS errors = SUM(CASE(event.category == "js_error", 1, 0)), views = SUM(CASE(event.category == "page_view", 1, 0))
     | EVAL per_1000 = ROUND(1000.0 * errors / views, 1), detail = CONCAT(TO_STRING(errors), " errors") | KEEP per_1000, detail`,
@@ -741,8 +752,9 @@ const d7 = {
     [["problems", "number", "Open problems"], ["detail", "string"]], { metric: "problems", secondary: "detail" }),
   saw: esql("secbank-d7-saw", "What the customer saw", `${JEV} AND ${TECH}
     | STATS customers = COUNT_DISTINCT(bank.customer.ref), failures = COUNT(*), first_seen = MIN(@timestamp), last_seen = MAX(@timestamp)
-      BY journey.name, journey.step, journey.reason_code, http.response.status_code | SORT failures DESC | LIMIT 12`,
-    [["journey.name", "string", "Journey"], ["journey.step", "string", "Step"], ["journey.reason_code", "string", "What they were told"],
+      BY journey.name, journey.step, journey.reason_code, http.response.status_code | SORT failures DESC | LIMIT 12
+    | EVAL journey = ${JNAME("journey.name")}`,
+    [["journey", "string", "Journey"], ["journey.step", "string", "Step"], ["journey.reason_code", "string", "What they were told"],
       ["http.response.status_code", "number", "HTTP"], ["customers", "number"], ["failures", "number"], ["first_seen", "date", "First"], ["last_seen", "date", "Last"]], { table: true }),
   evidence: esql("secbank-d7-evidence", "Evidence, in time order", `FROM logs-bank.app-default, bank-problems
     | WHERE event.category == "deployment" OR problem.id IS NOT NULL
