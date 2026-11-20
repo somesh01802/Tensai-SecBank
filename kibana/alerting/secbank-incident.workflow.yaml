@@ -49,7 +49,7 @@ steps:
     else:
       - name: open_if_new
         type: if
-        condition: "steps.find_case.output.total: 0"
+        condition: "steps.find_case.output.total: 0 and steps.get_problem.output.hits.total.value > 0"
         steps:
           - name: by_severity
             type: if
