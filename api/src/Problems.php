@@ -14,7 +14,7 @@ namespace Tensai;
  *                    failures >= 70 % in one region become one regional problem across journeys (blast radius)
  *   reason_shift     one business decline reason at >= 3x its baseline rate (declines that are not the customer's fault)
  *   volume_drop      autopay runs below 60 % of the 6-hour p75 per minute, with no errors (technology green, business red)
- *   branch_dark      a branch with >= 0.5 events/min stops emitting for 5 min
+ *   branch_dark      a branch with >= 0.5 events/min goes silent for max(5 min, 10 events at its rate)
  * A problem closes after 5 minutes without its signal.
  */
 final class Problems
@@ -277,7 +277,8 @@ final class Problems
             // Value delayed = bill payments and transfers normally made at the branch; teller cash and loan applications are not.
             $first = self::ts($r['first_at']); $last = self::ts($r['last_at']);
             $rate = $r['n'] / max(1, ($last - $first) / 60);
-            if ($last >= $now - 300 || $rate < 2 || $last - $first < 1800) continue;
+            // Dark = silent long enough that a live branch would have sent ~10 events: 5 min at >= 2/min, 20 min at 0.5/min.
+            if ($rate < 0.5 || $last - $first < 1800 || $now - $last < max(300, 600 / $rate)) continue;
             $dark = ($now - $last) / 60;
             $out['branch:' . $r['bank.branch.id']] = ['kind' => 'branch_dark', 'started_at' => self::iso($last), 'severity' => 'minor',
                 'title' => "Branch {$r['bank.branch.id']} not transacting (teller and ATM), " . round($dark) . ' min',
