@@ -1,0 +1,78 @@
+# SecBank incident workflow (Kibana 9.5 Workflows, Enterprise). Paste into the Workflows editor in the TEST space.
+# Triggered by the three SecBank alert rules (attach it as a rule action: rule > Actions > Workflow).
+# On a new alert: read the problem, open ONE case per problem (tagged with its id, so no duplicates),
+# add the incident-room evidence as the first comment. On recovery: comment and close the case.
+# It never runs a fix: rollback/failover/scale stay human decisions (wait-for-approval step, step 5).
+#
+# VERIFY IN THE EDITOR: the editor validates step types as you type. Where a line is marked "check",
+# start typing the type and pick the matching step from autocomplete; if a name differs, paste me the
+# editor's error and I'll correct it. Do not guess-edit field names.
+
+name: SecBank incident from alert
+description: One case per SecBank problem, with impact, evidence, owner and recommended response.
+enabled: true
+tags: [secbank]
+
+triggers:
+  - type: alert
+
+steps:
+  # 1. The alert group is the problem id (rules group by problem.id). Read the full problem document.
+  - name: get_problem
+    type: elasticsearch.search                      # check
+    with:
+      index: bank-problems
+      size: 1
+      query:
+        term:
+          problem.id: "{{ event.alerts[0].kibana.alert.instance.id }}"   # check: alert field path
+
+  # 2. Is there already a case for this problem? (dedup: tag "problem:<id>")
+  - name: find_case
+    type: kibana.findCases                           # check
+    with:
+      tags: ["problem:{{ event.alerts[0].kibana.alert.instance.id }}"]
+      status: open
+
+  # 3. New problem -> open the case with the incident-room record.
+  - name: open_case
+    type: if
+    condition: "steps.find_case.output.total == 0"   # check: condition syntax
+    steps:
+      - name: create_case
+        type: kibana.createCase                      # check
+        with:
+          title: "[{{ steps.get_problem.output.hits.hits[0]._source.problem.priority }}] {{ steps.get_problem.output.hits.hits[0]._source.problem.title }}"
+          # case severity: P1 critical -> critical, P2 major -> high, P3 minor -> medium (check: Liquid `case` support)
+          severity: "{% case steps.get_problem.output.hits.hits[0]._source.problem.severity %}{% when 'critical' %}critical{% when 'major' %}high{% else %}medium{% endcase %}"
+          tags: ["secbank", "problem:{{ event.alerts[0].kibana.alert.instance.id }}", "{{ steps.get_problem.output.hits.hits[0]._source.problem.priority }}"]
+          owner: observability
+          description: |
+            Severity: {{ steps.get_problem.output.hits.hits[0]._source.problem.priority }} ({{ steps.get_problem.output.hits.hits[0]._source.problem.severity }})
+            Problem: {{ steps.get_problem.output.hits.hits[0]._source.problem.id }}
+            Affected service: {{ steps.get_problem.output.hits.hits[0]._source.service.name }}
+            Journey: {{ steps.get_problem.output.hits.hits[0]._source.journey.name }}
+            Started: {{ steps.get_problem.output.hits.hits[0]._source.problem.started_at }}
+            Detected: {{ steps.get_problem.output.hits.hits[0]._source.problem.detected_at }}
+            Impact: {{ steps.get_problem.output.hits.hits[0]._source.impact.customers }} customers, {{ steps.get_problem.output.hits.hits[0]._source.impact.value_at_risk }} USD at risk
+            Owner: {{ steps.get_problem.output.hits.hits[0]._source.problem.owner }}
+            Status: open
+            Recommended response: {{ steps.get_problem.output.hits.hits[0]._source.problem.response }}
+            Evidence: SecBank D7 Incident Room, same time range. Every action is human approved.
+
+  # 4. Recovery (problem closed by the detector) -> comment and close.
+  - name: on_recovery
+    type: if
+    condition: "event.alerts[0].kibana.alert.status == 'recovered' and steps.find_case.output.total > 0"   # check
+    steps:
+      - name: close_case
+        type: kibana.updateCase                      # check
+        with:
+          id: "{{ steps.find_case.output.cases[0].id }}"
+          status: closed
+          comment: "Problem closed by the detector: no signal for 5 minutes."
+
+  # 5. Any remediation is proposed only. Add your rollback/failover step AFTER this gate, never before.
+  # - name: approve_remediation
+  #   type: waitForApproval                          # check (9.5)
+  #   with: { message: "Approve the proposed failover for {{ event.alerts[0].kibana.alert.instance.id }}?" }

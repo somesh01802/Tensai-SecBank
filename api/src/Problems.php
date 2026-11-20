@@ -26,12 +26,21 @@ final class Problems
     private const K = 'ES_BANK_API_KEY';
     public const SEVERITY = ['critical' => 1, 'major' => 2, 'minor' => 3];
     public const TARGET_MIN = ['critical' => 30, 'major' => 45, 'minor' => 60];
+    /** Alert priority shown on every alert, case and incident row: P1 critical, P2 major, P3 minor. */
+    public const PRIORITY = ['critical' => 'P1', 'major' => 'P2', 'minor' => 'P3'];
+    /** First response per problem kind (incident room "recommended response"). Every action stays human approved. */
+    public const RESPONSE = [
+        'journey_failure' => 'Check the failing dependency and its service; prepare failover or rollback for approval.',
+        'reason_shift' => 'Compare the reason-code mix with the last release; check fraud and decline logic.',
+        'volume_drop' => 'Check the scheduled job and its batch lock; volume is down with no technical errors.',
+        'branch_dark' => 'Check the branch WAN link and the ATM probe; assign to the branch network team.',
+    ];
     private const TERMINAL = '("completed", "failed", "abandoned", "pending")';
 
     public static function mappings(): array
     {
         $p = ['@timestamp' => 'date', 'problem.id' => 'keyword', 'problem.key' => 'keyword', 'problem.status' => 'keyword',
-            'problem.severity' => 'keyword', 'problem.severity_rank' => 'integer', 'problem.kind' => 'keyword', 'problem.title' => 'keyword',
+            'problem.severity' => 'keyword', 'problem.severity_rank' => 'integer', 'problem.priority' => 'keyword', 'problem.response' => 'keyword', 'problem.kind' => 'keyword', 'problem.title' => 'keyword',
             'problem.owner' => 'keyword', 'problem.started_at' => 'date', 'problem.detected_at' => 'date', 'problem.last_seen_at' => 'date',
             'problem.ended_at' => 'date', 'problem.age_target_min' => 'integer', 'problem.open_min' => 'double',
             'journey.name' => 'keyword', 'journey.reason_code' => 'keyword', 'bank.region' => 'keyword', 'bank.branch.id' => 'keyword',
@@ -100,7 +109,8 @@ final class Problems
             // Severity never drops while a problem is open.
             if (isset($p['problem']['severity']) && self::SEVERITY[$p['problem']['severity']] < self::SEVERITY[$sev]) $sev = $p['problem']['severity'];
             $p['@timestamp'] = self::iso($start);
-            $p['problem'] = array_merge($p['problem'], ['severity' => $sev, 'severity_rank' => self::SEVERITY[$sev], 'kind' => $c['kind'],
+            $p['problem'] = array_merge($p['problem'], ['severity' => $sev, 'severity_rank' => self::SEVERITY[$sev],
+                'priority' => self::PRIORITY[$sev], 'response' => self::RESPONSE[$c['kind']] ?? null, 'kind' => $c['kind'],
                 'title' => $c['title'], 'owner' => $c['owner'], 'started_at' => self::iso($start), 'last_seen_at' => self::iso($now),
                 'age_target_min' => self::TARGET_MIN[$sev], 'open_min' => round(($now - self::ts($p['problem']['detected_at'])) / 60, 1)]);
             foreach (['journey', 'bank', 'service'] as $k) if (isset($c[$k])) $p[$k] = $c[$k];

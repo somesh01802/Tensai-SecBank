@@ -1,0 +1,119 @@
+# SecBank alerting: paste into Kibana Dev Tools > Console, one block at a time.
+# Runs as YOU (no API key). Everything is created in the test space only.
+# Before pasting, replace these placeholders everywhere (Find/Replace in a text editor):
+#   SPACE        your test space id               (from step 0)
+#   EMAIL_ID     email connector id               (from step 0, e.g. the preconfigured Elastic Cloud one)
+#   SLACK_ID     Slack/Teams connector id         (create it yourself in the test space; webhook stays in Kibana)
+#   P1_TO, P2_TO recipient addresses, e.g. "oncall@example.com","leads@example.com"
+# Severity: P1 = critical, P2 = major, P3 = minor. One alert per open problem (grouped by problem.id),
+# so the same problem never alerts twice; it recovers when the detector closes the problem.
+# Re-runnable: POST again returns 409; use the PUT block at the end to update.
+
+# ---------- 0. discovery (read-only) ----------
+GET kbn:/api/status
+GET kbn:/api/spaces/space
+GET kbn:/s/SPACE/api/actions/connectors
+
+# ---------- 1. P1 critical: email + Slack on open and on recovery ----------
+POST kbn:/s/SPACE/api/alerting/rule/secbank-alert-p1
+{
+  "name": "SecBank P1 (Critical): open business problem",
+  "rule_type_id": ".es-query",
+  "consumer": "stackAlerts",
+  "tags": ["secbank", "P1", "critical"],
+  "schedule": { "interval": "1m" },
+  "params": {
+    "searchType": "esQuery",
+    "index": ["bank-problems"],
+    "timeField": "problem.last_seen_at",
+    "esQuery": "{\"query\":{\"bool\":{\"filter\":[{\"term\":{\"problem.status\":\"open\"}},{\"term\":{\"problem.severity\":\"critical\"}}]}}}",
+    "size": 1,
+    "timeWindowSize": 5, "timeWindowUnit": "m",
+    "threshold": [0], "thresholdComparator": ">",
+    "aggType": "count", "groupBy": "top", "termField": "problem.id", "termSize": 100,
+    "excludeHitsFromPreviousRun": false
+  },
+  "actions": [
+    { "id": "EMAIL_ID", "group": "query matched",
+      "frequency": { "summary": false, "notify_when": "onActionGroupChange", "throttle": null },
+      "params": { "to": [P1_TO], "subject": "[P1 Critical] {{#context.hits}}{{_source.problem.title}}{{/context.hits}}",
+        "message": "{{#context.hits}}**P1 Critical: {{_source.problem.title}}**\n\nProblem: {{_source.problem.id}}\nOwner: {{_source.problem.owner}}\nService: {{_source.service.name}}  Journey: {{_source.journey.name}}\nStarted: {{_source.problem.started_at}}  Detected: {{_source.problem.detected_at}}\nImpact: {{_source.impact.customers}} customers, {{_source.impact.value_at_risk}} USD at risk\nRecommended response: {{_source.problem.response}}\n{{/context.hits}}\nIncident Room: {{context.link}}\nEvery action needs human approval." } },
+    { "id": "SLACK_ID", "group": "query matched",
+      "frequency": { "summary": false, "notify_when": "onActionGroupChange", "throttle": null },
+      "params": { "message": ":red_circle: *P1 Critical* {{#context.hits}}{{_source.problem.title}} | {{_source.problem.id}} | owner {{_source.problem.owner}} | {{_source.impact.customers}} customers, {{_source.impact.value_at_risk}} USD at risk{{/context.hits}}\n{{context.link}}" } },
+    { "id": "SLACK_ID", "group": "recovered",
+      "frequency": { "summary": false, "notify_when": "onActionGroupChange", "throttle": null },
+      "params": { "message": ":white_check_mark: *P1 resolved* {{alert.id}}" } }
+  ]
+}
+
+# ---------- 2. P2 major: email + Slack ----------
+POST kbn:/s/SPACE/api/alerting/rule/secbank-alert-p2
+{
+  "name": "SecBank P2 (Major): open business problem",
+  "rule_type_id": ".es-query",
+  "consumer": "stackAlerts",
+  "tags": ["secbank", "P2", "major"],
+  "schedule": { "interval": "1m" },
+  "params": {
+    "searchType": "esQuery",
+    "index": ["bank-problems"],
+    "timeField": "problem.last_seen_at",
+    "esQuery": "{\"query\":{\"bool\":{\"filter\":[{\"term\":{\"problem.status\":\"open\"}},{\"term\":{\"problem.severity\":\"major\"}}]}}}",
+    "size": 1,
+    "timeWindowSize": 5, "timeWindowUnit": "m",
+    "threshold": [0], "thresholdComparator": ">",
+    "aggType": "count", "groupBy": "top", "termField": "problem.id", "termSize": 100,
+    "excludeHitsFromPreviousRun": false
+  },
+  "actions": [
+    { "id": "EMAIL_ID", "group": "query matched",
+      "frequency": { "summary": false, "notify_when": "onActionGroupChange", "throttle": null },
+      "params": { "to": [P2_TO], "subject": "[P2 Major] {{#context.hits}}{{_source.problem.title}}{{/context.hits}}",
+        "message": "{{#context.hits}}**P2 Major: {{_source.problem.title}}**\n\nProblem: {{_source.problem.id}}\nOwner: {{_source.problem.owner}}\nService: {{_source.service.name}}  Journey: {{_source.journey.name}}\nStarted: {{_source.problem.started_at}}  Detected: {{_source.problem.detected_at}}\nImpact: {{_source.impact.customers}} customers, {{_source.impact.value_at_risk}} USD at risk\nRecommended response: {{_source.problem.response}}\n{{/context.hits}}\nIncident Room: {{context.link}}\nEvery action needs human approval." } },
+    { "id": "SLACK_ID", "group": "query matched",
+      "frequency": { "summary": false, "notify_when": "onActionGroupChange", "throttle": null },
+      "params": { "message": ":large_orange_circle: *P2 Major* {{#context.hits}}{{_source.problem.title}} | {{_source.problem.id}} | owner {{_source.problem.owner}}{{/context.hits}}\n{{context.link}}" } },
+    { "id": "SLACK_ID", "group": "recovered",
+      "frequency": { "summary": false, "notify_when": "onActionGroupChange", "throttle": null },
+      "params": { "message": ":white_check_mark: *P2 resolved* {{alert.id}}" } }
+  ]
+}
+
+# ---------- 3. P3 minor: Slack only (3 drills a day would flood email) ----------
+POST kbn:/s/SPACE/api/alerting/rule/secbank-alert-p3
+{
+  "name": "SecBank P3 (Minor): open business problem",
+  "rule_type_id": ".es-query",
+  "consumer": "stackAlerts",
+  "tags": ["secbank", "P3", "minor"],
+  "schedule": { "interval": "1m" },
+  "params": {
+    "searchType": "esQuery",
+    "index": ["bank-problems"],
+    "timeField": "problem.last_seen_at",
+    "esQuery": "{\"query\":{\"bool\":{\"filter\":[{\"term\":{\"problem.status\":\"open\"}},{\"term\":{\"problem.severity\":\"minor\"}}]}}}",
+    "size": 1,
+    "timeWindowSize": 5, "timeWindowUnit": "m",
+    "threshold": [0], "thresholdComparator": ">",
+    "aggType": "count", "groupBy": "top", "termField": "problem.id", "termSize": 100,
+    "excludeHitsFromPreviousRun": false
+  },
+  "actions": [
+    { "id": "SLACK_ID", "group": "query matched",
+      "frequency": { "summary": false, "notify_when": "onActionGroupChange", "throttle": null },
+      "params": { "message": ":large_yellow_circle: *P3 Minor* {{#context.hits}}{{_source.problem.title}} | {{_source.problem.id}} | owner {{_source.problem.owner}}{{/context.hits}}\n{{context.link}}" } }
+  ]
+}
+
+# ---------- 4. check ----------
+GET kbn:/s/SPACE/api/alerting/rules/_find?filter=alert.attributes.tags:secbank&per_page=50&fields=["name","enabled","tags"]
+
+# ---------- update an existing rule (drop rule_type_id and consumer from the body) ----------
+# PUT kbn:/s/SPACE/api/alerting/rule/secbank-alert-p1
+# { "name": ..., "tags": ..., "schedule": ..., "params": ..., "actions": ... }
+
+# ---------- remove (only these three) ----------
+# DELETE kbn:/s/SPACE/api/alerting/rule/secbank-alert-p1
+# DELETE kbn:/s/SPACE/api/alerting/rule/secbank-alert-p2
+# DELETE kbn:/s/SPACE/api/alerting/rule/secbank-alert-p3
