@@ -10,7 +10,7 @@
  * a genuine problem alerts the minute the detector sees it, whatever this schedule says.
  * It only stops drills it started itself (var/drills.json), never a fault a presenter started by hand.
  *
- *   */5 * * * * root cd /var/www/tensai-secbank/api && php bin/incident-drill.php >> /var/log/tensai-drill.log 2>&1
+ *   0-59/5 * * * * root cd /var/www/tensai-secbank/api && php bin/incident-drill.php >> /var/log/tensai-drill.log 2>&1
  *   php bin/incident-drill.php --plan        next 14 days of drills, changes nothing
  *   php bin/incident-drill.php --selftest    checks the schedule arithmetic
  */
