@@ -43,10 +43,9 @@ steps:
           - name: close_case
             type: cases.updateCase
             with:
-              cases:
-                - id: "{{ steps.find_case.output.cases[0].id }}"
-                  version: "{{ steps.find_case.output.cases[0].version }}"
-                  status: closed
+              case_id: "{{ steps.find_case.output.cases[0].id }}"
+              updates:
+                status: closed
     else:
       - name: open_if_new
         type: if
@@ -63,7 +62,6 @@ steps:
                   owner: observability
                   title: &title "[{{ steps.get_problem.output.hits.hits[0]._source.problem.priority }}] {{ steps.get_problem.output.hits.hits[0]._source.problem.title }}"
                   tags: &tags ["secbank", "problem:{{ event.alerts[0].kibana.alert.instance.id }}", "{{ steps.get_problem.output.hits.hits[0]._source.problem.priority }}"]
-                  connector: &connector { id: none, name: none, type: .none, fields: null }
                   settings: &settings { syncAlerts: false }
                   description: &desc |
                     Severity: {{ steps.get_problem.output.hits.hits[0]._source.problem.priority }} ({{ steps.get_problem.output.hits.hits[0]._source.problem.severity }})
@@ -84,8 +82,8 @@ steps:
                 steps:
                   - name: create_case_p2
                     type: cases.createCase
-                    with: { severity: high, owner: observability, title: *title, tags: *tags, connector: *connector, settings: *settings, description: *desc }
+                    with: { severity: high, owner: observability, title: *title, tags: *tags, settings: *settings, description: *desc }
                 else:
                   - name: create_case_p3
                     type: cases.createCase
-                    with: { severity: medium, owner: observability, title: *title, tags: *tags, connector: *connector, settings: *settings, description: *desc }
+                    with: { severity: medium, owner: observability, title: *title, tags: *tags, settings: *settings, description: *desc }
