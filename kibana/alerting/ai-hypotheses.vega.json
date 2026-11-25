@@ -1,0 +1,85 @@
+{
+  "$schema": "https://vega.github.io/schema/vega/v5.json",
+  "description": "SecBank AI hypotheses card: the latest agent RCA (incident.* on bank-problems, written by the 'SecBank incident from alert' workflow). Dashboard > Edit > Add panel > Custom visualization (Vega) > replace the spec with this file > Update > Save.",
+  "autosize": {"type": "fit", "contains": "padding"},
+  "padding": 8,
+  "background": "transparent",
+  "config": {"view": {"stroke": null}, "text": {"font": "Inter, sans-serif"}},
+
+  "signals": [
+    {"name": "cpl", "update": "max(40, floor((width - 40) / 7))"}
+  ],
+
+  "data": [
+    {
+      "name": "src",
+      "url": {
+        "index": "bank-problems",
+        "body": {
+          "size": 1,
+          "sort": [{"incident.posted_at": {"order": "desc"}}],
+          "_source": ["problem.priority", "problem.title", "incident.*"],
+          "query": {"bool": {
+            "must": ["%dashboard_context-must_clause%"],
+            "must_not": ["%dashboard_context-must_not_clause%"],
+            "filter": ["%dashboard_context-filter_clause%",
+              {"exists": {"field": "incident.posted_at"}},
+              {"term": {"labels.data_source": "detector"}}]
+          }}
+        }
+      },
+      "format": {"property": "hits.hits"}
+    },
+    {
+      "name": "hyp",
+      "source": "src",
+      "transform": [
+        {"type": "formula", "as": "rows", "expr": "[{n: 1, t: datum._source.incident.h1_title, c: datum._source.incident.h1_confidence, d: datum._source.incident.h1_detail, x: datum._source.incident.h1_cause}, {n: 2, t: datum._source.incident.h2_title, c: datum._source.incident.h2_confidence, d: datum._source.incident.h2_detail, x: ''}, {n: 3, t: datum._source.incident.h3_title, c: datum._source.incident.h3_confidence, d: datum._source.incident.h3_detail, x: ''}]"},
+        {"type": "flatten", "fields": ["rows"], "as": ["r"]},
+        {"type": "filter", "expr": "datum.r.t"},
+        {"type": "formula", "as": "lines", "expr": "split(trim(replace(datum.r.d || '', regexp('(.{1,' + cpl + '})(\\\\s+|$)', 'g'), '$1\\n')), '\\n')"},
+        {"type": "formula", "as": "h", "expr": "34 + 17 * length(datum.lines) + (datum.r.x ? 18 : 0)"},
+        {"type": "window", "sort": {"field": "r.n"}, "ops": ["sum"], "fields": ["h"], "as": ["cum"]},
+        {"type": "formula", "as": "y", "expr": "50 + datum.cum - datum.h + (datum.r.n - 1) * 10"}
+      ]
+    }
+  ],
+
+  "marks": [
+    {"type": "text", "encode": {"update": {
+      "x": {"value": 0}, "y": {"value": 14}, "text": {"value": "AI hypotheses"},
+      "fontSize": {"value": 15}, "fontWeight": {"value": "bold"}, "fill": {"value": "#dfe5ef"}}}},
+    {"type": "text", "from": {"data": "src"}, "encode": {"update": {
+      "x": {"signal": "width"}, "y": {"value": 14}, "align": {"value": "right"},
+      "text": {"signal": "(datum._source.incident.agent || 'RCA agent') + ', posted ' + utcFormat(toDate(datum._source.incident.posted_at), '%H:%M:%S') + ' UTC'"},
+      "fontSize": {"value": 12}, "fill": {"value": "#98a2b3"}}}},
+    {"type": "text", "from": {"data": "src"}, "encode": {"update": {
+      "x": {"value": 0}, "y": {"value": 34}, "limit": {"signal": "width"},
+      "text": {"signal": "datum._source.problem.priority + ' ' + datum._source.problem.title + (datum._source.incident.snow_number ? ' · ' + datum._source.incident.snow_number : '')"},
+      "fontSize": {"value": 12}, "fill": {"value": "#98a2b3"}}}},
+
+    {"type": "group", "from": {"data": "hyp"}, "encode": {"update": {
+      "x": {"value": 0}, "y": {"field": "y"}, "width": {"signal": "width"}, "height": {"field": "h"},
+      "fill": {"value": "rgba(255,255,255,0.05)"}, "cornerRadius": {"value": 4}}},
+      "marks": [
+        {"type": "rect", "encode": {"update": {
+          "x": {"value": 0}, "y": {"value": 0}, "width": {"value": 4}, "height": {"signal": "parent.h"},
+          "fill": {"signal": "parent.r.n == 1 ? '#e7664c' : parent.r.n == 2 ? '#f5a700' : '#6a717d'"}}}},
+        {"type": "text", "encode": {"update": {
+          "x": {"value": 14}, "y": {"value": 20},
+          "text": {"signal": "parent.r.n + '. ' + parent.r.t + ', ' + (parent.r.n == 1 ? 'confidence ' : '') + format(toNumber(parent.r.c), '.2f')"},
+          "fontSize": {"value": 14}, "fontWeight": {"value": "bold"}, "fill": {"value": "#dfe5ef"}}}},
+        {"type": "text", "encode": {"update": {
+          "x": {"value": 14}, "y": {"value": 40}, "text": {"signal": "parent.lines"}, "lineHeight": {"value": 17},
+          "fontSize": {"value": 13}, "fill": {"value": "#c5ccd8"}}}},
+        {"type": "text", "encode": {"update": {
+          "x": {"value": 14}, "y": {"signal": "40 + 17 * length(parent.lines)"}, "text": {"signal": "parent.r.x || ''"},
+          "font": {"value": "monospace"}, "fontSize": {"value": 12}, "fill": {"value": "#98a2b3"}}}}
+      ]},
+
+    {"type": "text", "encode": {"update": {
+      "x": {"value": 0}, "y": {"signal": "length(data('hyp')) ? peek(data('hyp')).y + peek(data('hyp')).h + 22 : 60"},
+      "text": {"signal": "length(data('hyp')) ? 'Every statement links to the query behind it. The agent proposes; it does not act.' : 'No agent RCA posted yet.'"},
+      "fontSize": {"value": 12}, "fill": {"value": "#6a717d"}}}}
+  ]
+}
