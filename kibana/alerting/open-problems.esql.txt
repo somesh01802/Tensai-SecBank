@@ -1,0 +1,23 @@
+// Open problems panel for a Kibana dashboard (D7 Incident Room / D0).
+// Dashboard > Edit > Add panel > ES|QL > paste > Apply > visualization type: Table > title "Open problems" > Save.
+// One row per open detector problem, most severe first, with the ServiceNow incident raised by the workflow.
+
+FROM bank-problems
+| WHERE problem.status == "open" AND labels.data_source == "detector"
+| SORT problem.severity_rank ASC, impact.value_at_risk DESC
+| EVAL Problem = CONCAT(problem.priority, " ", problem.title),
+       Severity = CASE(problem.severity == "critical", "Critical", problem.severity == "major", "Major", "Minor"),
+       Started = DATE_FORMAT("HH:mm", problem.started_at),
+       Detected = DATE_FORMAT("HH:mm", problem.detected_at),
+       Customers = COALESCE(TO_STRING(impact.customers), "walk-in"),
+       `Value at risk` = CASE(impact.value_failed > 0, CONCAT("$", TO_STRING(ROUND(impact.value_failed / 1000, 1)), "k failed"),
+                              CONCAT("$", TO_STRING(ROUND(COALESCE(impact.value_delayed, 0) / 1000, 1)), "k delayed")),
+       Grouped = CONCAT(TO_STRING(COALESCE(impact.failures, 0)), " failures"),
+       Owner = problem.owner,
+       State = CASE(incident.state == "closed", "Closed",
+                    incident.next_action IS NOT NULL AND incident.next_action != "Investigating", CONCAT(incident.next_action, " awaiting approval"),
+                    incident.snow_number IS NOT NULL, "Investigating, no action yet",
+                    "New, ticket being raised"),
+       Case = COALESCE(CONCAT("SNOW ", incident.snow_number), "-")
+| KEEP Problem, Severity, Started, Detected, Customers, `Value at risk`, Grouped, Owner, State, Case
+| LIMIT 50
