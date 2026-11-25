@@ -53,7 +53,7 @@ final class Problems
             'incident.agent' => 'keyword', 'incident.posted_at' => 'date', 'incident.conversation_id' => 'keyword', 'incident.next_action' => 'keyword',
             'incident.h1_title' => 'keyword', 'incident.h1_confidence' => 'double', 'incident.h1_detail' => 'keyword', 'incident.h1_cause' => 'keyword',
             'incident.h2_title' => 'keyword', 'incident.h2_confidence' => 'double', 'incident.h2_detail' => 'keyword',
-            'incident.h3_title' => 'keyword', 'incident.h3_confidence' => 'double', 'incident.h3_detail' => 'keyword'];
+            'incident.h3_title' => 'keyword', 'incident.h3_confidence' => 'double', 'incident.h3_detail' => 'keyword', 'incident.grouped' => 'keyword'];
         $r = ['@timestamp' => 'date', 'risk.key' => 'keyword', 'risk.type' => 'keyword', 'risk.title' => 'keyword', 'risk.component' => 'keyword',
             'risk.owner' => 'keyword', 'risk.source' => 'keyword', 'risk.status' => 'keyword', 'risk.due_at' => 'date', 'risk.days_left' => 'double',
             'risk.confidence' => 'double', 'risk.first_seen_at' => 'date', 'service.name' => 'keyword', 'labels.data_source' => 'keyword'];

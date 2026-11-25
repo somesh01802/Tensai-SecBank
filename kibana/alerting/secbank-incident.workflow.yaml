@@ -141,6 +141,39 @@ steps:
                   value_failed: { sum: { field: health.value_failed } }
                   min_index: { min: { field: health.index } }
 
+          # Grouped: other Kibana alerts (SLO burn, latency/error rules, ML, synthetics) that fired for the same
+          # service, journey or branch from 10 min before the problem started. SecBank P1-P3 alerts are excluded.
+          - name: get_grouped
+            type: elasticsearch.request
+            on-failure:
+              continue: true
+            with:
+              method: POST
+              path: "/.alerts-*/_search?expand_wildcards=all&ignore_unavailable=true"
+              body:
+                size: 0
+                query:
+                  bool:
+                    filter:
+                      - range:
+                          kibana.alert.start:
+                            gte: "{{ steps.get_problem.output.hits.hits[0]._source.problem.started_at }}||-10m"
+                    should:
+                      - term: { service.name: "{{ steps.get_problem.output.hits.hits[0]._source.service.name }}" }
+                      - match_phrase: { kibana.alert.reason: "{{ steps.get_problem.output.hits.hits[0]._source.service.name }}" }
+                      - match_phrase: { kibana.alert.reason: "{{ steps.get_problem.output.hits.hits[0]._source.journey.name }}" }
+                      - match_phrase: { kibana.alert.reason: "{{ steps.get_problem.output.hits.hits[0]._source.bank.branch.id }}" }
+                    minimum_should_match: 1
+                    must_not:
+                      - term: { kibana.alert.rule.tags: secbank }
+                aggs:
+                  warnings:
+                    filter:
+                      bool:
+                        should:
+                          - terms: { kibana.alert.severity: [warning, low, medium] }
+                          - terms: { kibana.alert.action_group: [slo.burnRate.medium, slo.burnRate.low] }
+
           - name: run_rca
             type: ai.agent
             agent-id: "incident-root-cause-analyzer"
@@ -339,6 +372,8 @@ steps:
                     h3_title: "{{ steps.card_fields.output.content.hypotheses[2].title | default: '' }}"
                     h3_confidence: "{{ steps.card_fields.output.content.hypotheses[2].confidence | default: 0 }}"
                     h3_detail: "{{ steps.card_fields.output.content.hypotheses[2].detail | default: '' }}"
+                    # "N alerts + M warnings": the SecBank alert itself counts as 1 alert.
+                    grouped: "{% assign t = steps.get_grouped.output.hits.total.value | default: 0 %}{% assign w = steps.get_grouped.output.aggregations.warnings.doc_count | default: 0 %}{% assign a = t | minus: w | plus: 1 %}{{ a }} alert{% if a != 1 %}s{% endif %}{% if w > 0 %} + {{ w }} warning{% if w != 1 %}s{% endif %}{% endif %}"
             on-failure:
               retry:
                 max-attempts: 3

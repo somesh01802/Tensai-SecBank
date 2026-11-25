@@ -12,7 +12,7 @@ FROM bank-problems
        Customers = COALESCE(TO_STRING(impact.customers), "walk-in"),
        `Value at risk` = CASE(impact.value_failed > 0, CONCAT("$", TO_STRING(ROUND(impact.value_failed / 1000, 1)), "k failed"),
                               CONCAT("$", TO_STRING(ROUND(COALESCE(impact.value_delayed, 0.0) / 1000, 1)), "k delayed")),
-       Grouped = CONCAT(TO_STRING(COALESCE(impact.failures, TO_LONG(0))), " failures"),
+       Grouped = COALESCE(incident.grouped, "-"),
        Owner = problem.owner,
        State = CASE(incident.state == "closed", "Closed",
                     incident.next_action IS NOT NULL AND incident.next_action != "Investigating", CONCAT(incident.next_action, " awaiting approval"),
