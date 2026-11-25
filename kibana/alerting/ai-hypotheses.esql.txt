@@ -1,0 +1,18 @@
+// AI hypotheses panel for a Kibana dashboard (D7 Incident Room).
+// Dashboard > Edit > Add panel > ES|QL > paste the query > Apply > visualization type: Table > Save.
+// Latest agent RCA written by the "SecBank incident from alert" workflow (incident.* on bank-problems),
+// as 3 ranked rows. Set the panel title to "AI hypotheses" and, under the confidence column, Color by value.
+
+FROM bank-problems
+| WHERE incident.posted_at IS NOT NULL AND labels.data_source == "detector"
+| SORT incident.posted_at DESC
+| LIMIT 1
+| EVAL n = MV_APPEND(MV_APPEND(1, 2), 3)
+| MV_EXPAND n
+| EVAL hypothesis = CASE(n == 1, CONCAT("1. ", incident.h1_title), n == 2, CONCAT("2. ", incident.h2_title), CONCAT("3. ", incident.h3_title)),
+       confidence = CASE(n == 1, incident.h1_confidence, n == 2, incident.h2_confidence, incident.h3_confidence),
+       evidence = CASE(n == 1, CONCAT(incident.h1_detail, " ", incident.h1_cause), n == 2, incident.h2_detail, incident.h3_detail),
+       problem = CONCAT(problem.priority, " ", problem.title),
+       servicenow = incident.snow_number,
+       posted = incident.posted_at
+| KEEP hypothesis, confidence, evidence, problem, servicenow, posted
