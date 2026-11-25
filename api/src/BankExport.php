@@ -129,15 +129,6 @@ final class BankExport
         'cause.true' => 'keyword', 'cause.top1' => 'keyword', 'cause.top3' => 'keyword', 'score.top1_hit' => 'boolean', 'score.top3_hit' => 'boolean',
         'score.time_to_hypothesis_s' => 'double', 'score.tool_calls' => 'integer', 'score.tokens' => 'long', 'score.approval_latency_s' => 'double',
         'score.confidence' => 'double', 'labels.data_source' => 'keyword'];
-    /** One document per problem (_id = problem.id), written by the Kibana incident workflow: ServiceNow incident + agent RCA.
-     *  Separate from bank-problems because the detector rewrites those documents every minute. */
-    public const INCIDENTS = 'bank-incidents';
-    private const INCIDENT_FIELDS = ['@timestamp' => 'date', 'problem.id' => 'keyword', 'problem.priority' => 'keyword', 'problem.severity' => 'keyword',
-        'problem.title' => 'keyword', 'incident.state' => 'keyword', 'snow.number' => 'keyword', 'snow.sys_id' => 'keyword', 'snow.url' => 'keyword',
-        'case.id' => 'keyword', 'rca.agent' => 'keyword', 'rca.posted_at' => 'date', 'rca.conversation_id' => 'keyword', 'rca.analysis' => 'text',
-        'rca.next_action' => 'keyword', 'rca.h1_title' => 'keyword', 'rca.h1_confidence' => 'double', 'rca.h1_detail' => 'keyword', 'rca.h1_cause' => 'keyword',
-        'rca.h2_title' => 'keyword', 'rca.h2_confidence' => 'double', 'rca.h2_detail' => 'keyword', 'rca.h3_title' => 'keyword',
-        'rca.h3_confidence' => 'double', 'rca.h3_detail' => 'keyword', 'labels.data_source' => 'keyword'];
     private const LEDGER_FIELDS = ['@timestamp' => 'date', 'scenario.id' => 'keyword', 'scenario.symptom' => 'keyword',
         'problem.id' => 'keyword', 'problem.severity' => 'keyword', 'cause.line' => 'keyword', 'cause.service' => 'keyword',
         'cause.component' => 'keyword', 'cause.type' => 'keyword', 'started_at' => 'date', 'ended_at' => 'date', 'labels.data_source' => 'keyword'];
@@ -173,7 +164,7 @@ final class BankExport
             ['number_of_shards' => 1]);
         // Ground truth for scoring. Presenter and agent roles must not be granted read on it.
         self::ensureIndex(self::LEDGER, ['dynamic' => false, 'properties' => self::props(self::LEDGER_FIELDS)], ['number_of_shards' => 1]);
-        foreach (Problems::mappings() + [self::AI_SCORES => self::AI_FIELDS, self::INCIDENTS => self::INCIDENT_FIELDS] as $index => $fields)
+        foreach (Problems::mappings() + [self::AI_SCORES => self::AI_FIELDS] as $index => $fields)
             self::ensureIndex($index, ['dynamic' => false, 'properties' => self::props($fields)], ['number_of_shards' => 1]);
         self::seedLookups();
     }

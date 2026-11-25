@@ -47,7 +47,13 @@ final class Problems
             'bank.dependency' => 'keyword', 'service.name' => 'keyword',
             'impact.customers' => 'long', 'impact.customers_estimated' => 'boolean', 'impact.failures' => 'long',
             'impact.value_failed' => 'double', 'impact.value_delayed' => 'double', 'impact.value_at_risk' => 'double',
-            'case.id' => 'keyword', 'labels.data_source' => 'keyword'];
+            'case.id' => 'keyword', 'labels.data_source' => 'keyword',
+            // Written by the Kibana incident workflow (ServiceNow + agent RCA); mapped so run() reads them back and keeps them.
+            'incident.state' => 'keyword', 'incident.snow_number' => 'keyword', 'incident.snow_sys_id' => 'keyword', 'incident.snow_url' => 'keyword',
+            'incident.agent' => 'keyword', 'incident.posted_at' => 'date', 'incident.conversation_id' => 'keyword', 'incident.next_action' => 'keyword',
+            'incident.h1_title' => 'keyword', 'incident.h1_confidence' => 'double', 'incident.h1_detail' => 'keyword', 'incident.h1_cause' => 'keyword',
+            'incident.h2_title' => 'keyword', 'incident.h2_confidence' => 'double', 'incident.h2_detail' => 'keyword',
+            'incident.h3_title' => 'keyword', 'incident.h3_confidence' => 'double', 'incident.h3_detail' => 'keyword'];
         $r = ['@timestamp' => 'date', 'risk.key' => 'keyword', 'risk.type' => 'keyword', 'risk.title' => 'keyword', 'risk.component' => 'keyword',
             'risk.owner' => 'keyword', 'risk.source' => 'keyword', 'risk.status' => 'keyword', 'risk.due_at' => 'date', 'risk.days_left' => 'double',
             'risk.confidence' => 'double', 'risk.first_seen_at' => 'date', 'service.name' => 'keyword', 'labels.data_source' => 'keyword'];
@@ -74,7 +80,8 @@ final class Problems
         for ($t = $from ? intdiv($from, 60) * 60 : $now; $t <= $now; $t += 60) self::step($t, $open, $done);
         $risks = self::risks($now);
         $docs = array_map(fn($p) => [$p['problem']['id'], $p], array_merge(array_values($open), $done));
-        $f = $docs ? Es::bulk(self::INDEX, $docs, false, self::K) : 0;
+        // Merge, not overwrite: incident.* fields written by the workflow survive the detector's rewrite.
+        $f = $docs ? Es::bulk(self::INDEX, $docs, false, self::K, true) : 0;
         $f += $risks ? Es::bulk(self::RISKS, array_map(fn($r) => [$r['risk']['key'], $r], $risks), false, self::K) : 0;
         $f += Es::bulk(self::RANK, self::rank($now, $open, $risks), false, self::K);
         printf("[problems] open %d, closed %d, risks %d%s\n", count($open), count($done), count(array_filter($risks, fn($r) => $r['risk']['status'] === 'open')), $f ? " ($f FAILED)" : '');

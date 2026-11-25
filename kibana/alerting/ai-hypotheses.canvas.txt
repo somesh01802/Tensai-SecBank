@@ -1,15 +1,15 @@
 // AI hypotheses widget for the SecBank Canvas wallboard.
 // Canvas > Edit > Add element > Text (Markdown) > select it > Expression editor (bottom) > replace everything with the
 // expression below > Run. It shows the latest agent RCA written by the "SecBank incident from alert" workflow
-// (index bank-incidents): 3 ranked hypotheses, red / amber / grey bars like the reference card.
+// (incident.* fields on bank-problems): 3 ranked hypotheses, red / amber / grey bars like the reference card.
 
 essql
-  query="SELECT \"problem.priority\" AS p, \"problem.title\" AS problem, \"snow.number\" AS inc, \"rca.agent\" AS agent,
-    DATETIME_FORMAT(\"rca.posted_at\", 'HH:mm:ss') AS posted,
-    \"rca.h1_title\" AS h1t, \"rca.h1_confidence\" AS h1c, \"rca.h1_detail\" AS h1d, \"rca.h1_cause\" AS h1x,
-    \"rca.h2_title\" AS h2t, \"rca.h2_confidence\" AS h2c, \"rca.h2_detail\" AS h2d,
-    \"rca.h3_title\" AS h3t, \"rca.h3_confidence\" AS h3c, \"rca.h3_detail\" AS h3d
-    FROM \"bank-incidents\" WHERE \"rca.posted_at\" IS NOT NULL ORDER BY \"rca.posted_at\" DESC LIMIT 1"
+  query="SELECT \"problem.priority\" AS p, \"problem.title\" AS problem, \"incident.snow_number\" AS inc, \"incident.agent\" AS agent,
+    DATETIME_FORMAT(\"incident.posted_at\", 'HH:mm:ss') AS posted,
+    \"incident.h1_title\" AS h1t, \"incident.h1_confidence\" AS h1c, \"incident.h1_detail\" AS h1d, \"incident.h1_cause\" AS h1x,
+    \"incident.h2_title\" AS h2t, \"incident.h2_confidence\" AS h2c, \"incident.h2_detail\" AS h2d,
+    \"incident.h3_title\" AS h3t, \"incident.h3_confidence\" AS h3c, \"incident.h3_detail\" AS h3d
+    FROM \"bank-problems\" WHERE \"incident.posted_at\" IS NOT NULL AND \"labels.data_source\" = 'detector' ORDER BY \"incident.posted_at\" DESC LIMIT 1"
 | markdown "{{#each rows}}**AI hypotheses** &nbsp; {{p}} {{problem}} · {{inc}}
 
 *{{agent}}, posted {{posted}} UTC*

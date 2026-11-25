@@ -1,11 +1,9 @@
 # SecBank incident workflow (Kibana 9.5 Workflows). Paste into the Workflows editor, replacing the old version.
-# Rule action: run on "New alerts" and "Recovered alerts" (untick "Ongoing alerts": one run per problem is enough).
+# Rule action: run on "New alerts" and "Recovered alerts" only (untick "Ongoing alerts"): one run per problem.
 #
-# New problem:  claim it in bank-incidents (a second run for the same problem fails here, so no duplicate INC) ->
-#               evidence (logs, journey health) -> Agent Builder RCA -> 3 ranked hypotheses ->
-#               ServiceNow incident -> Kibana case (with INC number and the top hypothesis) -> bank-incidents doc.
-# Recovered:    close the case, mark the incident closed in bank-incidents, add a work note to the INC.
-# bank-incidents (not bank-problems): the detector rewrites bank-problems documents every minute.
+# New problem (no incident.snow_number yet): evidence (logs, journey health) -> Agent Builder RCA -> 3 ranked
+#   hypotheses -> ServiceNow incident -> Kibana case (INC number + top hypothesis) -> incident.* on the bank-problems doc.
+# Recovered: close the case, incident.state = closed, work note on the INC.
 # The agent proposes; it never acts. "Variable cannot be validated" warnings on {{ }} are expected.
 
 name: SecBank incident from alert
@@ -36,14 +34,20 @@ steps:
       tags: ["problem:{{ event.alerts[0].kibana.alert.instance.id }}"]
       status: open
 
-  - name: find_incident
+  # The problem, only if it has no ServiceNow incident yet (dedup).
+  - name: unticketed
     type: elasticsearch.search
     with:
-      index: bank-incidents
-      size: 1
+      index: bank-problems
+      size: 0
       query:
-        ids:
-          values: ["{{ event.alerts[0].kibana.alert.instance.id }}"]
+        bool:
+          filter:
+            - term:
+                problem.id: "{{ event.alerts[0].kibana.alert.instance.id }}"
+          must_not:
+            - exists:
+                field: incident.snow_number
 
   - name: route
     type: if
@@ -62,13 +66,13 @@ steps:
                 status: closed
       - name: incident_if_any
         type: if
-        condition: "steps.find_incident.output.hits.total.value > 0"
+        condition: "steps.unticketed.output.hits.total.value: 0 and steps.get_problem.output.hits.total.value > 0"
         steps:
           - name: mark_closed
             type: elasticsearch.request
             with:
               method: POST
-              path: "/bank-incidents/_update/{{ event.alerts[0].kibana.alert.instance.id }}"
+              path: "/bank-problems/_update/{{ event.alerts[0].kibana.alert.instance.id }}?retry_on_conflict=3"
               body:
                 doc:
                   incident: { state: closed }
@@ -81,8 +85,8 @@ steps:
               subAction: pushToService
               subActionParams:
                 incident:
-                  externalId: "{{ steps.find_incident.output.hits.hits[0]._source.snow.sys_id }}"
-                  short_description: "SecBank - {{ steps.find_incident.output.hits.hits[0]._source.problem.title }}"
+                  externalId: "{{ steps.get_problem.output.hits.hits[0]._source.incident.snow_sys_id }}"
+                  short_description: "SecBank - {{ steps.get_problem.output.hits.hits[0]._source.problem.title }}"
                 comments:
                   - commentId: "recovered"
                     comment: "Problem closed by the SecBank detector: no signal for 5 minutes. Please verify and resolve."
@@ -90,24 +94,8 @@ steps:
       # ================= NEW PROBLEM =================
       - name: is_new
         type: if
-        condition: "steps.find_incident.output.hits.total.value: 0 and steps.get_problem.output.hits.total.value > 0"
+        condition: "steps.unticketed.output.hits.total.value > 0"
         steps:
-          # Claim: _create fails (409) if another run already took this problem, so the INC is raised once.
-          - name: claim
-            type: elasticsearch.request
-            with:
-              method: PUT
-              path: "/bank-incidents/_create/{{ event.alerts[0].kibana.alert.instance.id }}"
-              body:
-                "@timestamp": "{{ now | date: '%Y-%m-%dT%H:%M:%SZ' }}"
-                problem:
-                  id: "{{ steps.get_problem.output.hits.hits[0]._source.problem.id }}"
-                  priority: "{{ steps.get_problem.output.hits.hits[0]._source.problem.priority }}"
-                  severity: "{{ steps.get_problem.output.hits.hits[0]._source.problem.severity }}"
-                  title: "{{ steps.get_problem.output.hits.hits[0]._source.problem.title }}"
-                incident: { state: opening }
-                labels: { data_source: workflow }
-
           - name: get_log_evidence
             type: elasticsearch.request
             on-failure:
@@ -324,24 +312,22 @@ steps:
                         type: cases.createCase
                         with: { severity: medium, owner: observability, title: *title, tags: *tags, settings: *settings, description: *desc }
 
-          # The AI hypotheses widget reads this document.
+          # Written onto the problem itself (the detector merges, so these survive); the AI hypotheses widget reads them.
           - name: write_incident
             type: elasticsearch.request
             with:
               method: POST
-              path: "/bank-incidents/_update/{{ event.alerts[0].kibana.alert.instance.id }}"
+              path: "/bank-problems/_update/{{ event.alerts[0].kibana.alert.instance.id }}?retry_on_conflict=3"
               body:
                 doc:
-                  incident: { state: open }
-                  snow:
-                    number: "{{ steps.create_incident.output.title | default: '' }}"
-                    sys_id: "{{ steps.create_incident.output.id | default: '' }}"
-                    url: "{{ steps.create_incident.output.url | default: '' }}"
-                  rca:
+                  incident:
+                    state: open
+                    snow_number: "{{ steps.create_incident.output.title | default: '' }}"
+                    snow_sys_id: "{{ steps.create_incident.output.id | default: '' }}"
+                    snow_url: "{{ steps.create_incident.output.url | default: '' }}"
                     agent: incident-root-cause-analyzer
                     posted_at: "{{ now | date: '%Y-%m-%dT%H:%M:%SZ' }}"
                     conversation_id: "{{ steps.run_rca.output.conversation_id | default: '' }}"
-                    analysis: "{{ steps.run_rca.output.response.message | default: steps.run_rca.output.message | default: 'RCA not available' }}"
                     next_action: "{{ steps.card_fields.output.content.next_action | default: 'Investigating' }}"
                     h1_title: "{{ steps.card_fields.output.content.hypotheses[0].title | default: 'RCA not available' }}"
                     h1_confidence: "{{ steps.card_fields.output.content.hypotheses[0].confidence | default: 0 }}"

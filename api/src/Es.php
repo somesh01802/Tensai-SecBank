@@ -55,14 +55,16 @@ final class Es
      * Bulk write. $docs = [[_id, doc], ...]. $create=true for data streams (op "create"):
      * an already-present _id is a no-op, which makes re-runs idempotent. Returns #failed.
      */
-    public static function bulk(string $index, array $docs, bool $create, string $keyVar): int
+    public static function bulk(string $index, array $docs, bool $create, string $keyVar, bool $merge = false): int
     {
         $failed = 0;
         foreach (array_chunk($docs, 1000) as $chunk) {
             $buf = '';
             foreach ($chunk as [$id, $doc])
-                $buf .= json_encode([$create ? 'create' : 'index' => ['_index' => $index, '_id' => (string) $id]]) . "\n"
-                      . json_encode($doc, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES) . "\n";
+                // $merge: partial update (upsert), so fields other writers added to the document are kept.
+                $buf .= json_encode($merge ? ['update' => ['_index' => $index, '_id' => (string) $id, 'retry_on_conflict' => 3]]
+                        : [$create ? 'create' : 'index' => ['_index' => $index, '_id' => (string) $id]]) . "\n"
+                      . json_encode($merge ? ['doc' => $doc, 'doc_as_upsert' => true] : $doc, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES) . "\n";
             [$code, $j] = self::req('POST', '/_bulk', $buf, $keyVar, 'application/x-ndjson');
             if ($code >= 300) throw new \RuntimeException("bulk $index HTTP $code: " . json_encode($j['error'] ?? $j));
             foreach ($j['errors'] ?? false ? $j['items'] : [] as $it) {
