@@ -1,0 +1,27 @@
+// P1 / P2 / P3 tag for one Journey Health tile or Technology Stack chip on the SecBank Canvas wallboard.
+// Shows the most severe OPEN detector problem touching that journey / service / branch / region:
+// P1 red, P2 amber, P3 purple; nothing at all when no problem touches it.
+//
+// Add it: Canvas > Edit > Add element > Text > open the Expression editor > paste the expression below >
+// change ONLY the last condition of the query (see the table) > Run. Resize to about 34 x 20 px and drop it on
+// the tile or chip. Copy the element (Ctrl+C / Ctrl+V) for the next tile and change the condition again.
+//
+//   Tile / chip                         last condition of the WHERE
+//   Journey tiles                       AND \"journey.name\" = 'bill_pay'
+//     (autopay_setup, bill_pay, card_controls, card_payment, dispute, loan_apply, login, onboarding,
+//      p2p_transfer, view_accounts)
+//   Service chips                       AND \"service.name\" = 'payments-svc'
+//     (payments-svc, auth-svc, cards-svc, transfers-svc, notify-svc, fraud-engine)
+//   Branch chip                         AND \"bank.branch.id\" = 'BR-017'
+//   Region chip                         AND \"bank.region\" = 'Northeast'
+//   Customers row (any open problem)    delete the last condition
+
+essql
+  query="SELECT MIN(\"problem.severity_rank\") AS r FROM \"bank-problems\"
+    WHERE \"problem.status\" = 'open' AND \"labels.data_source\" = 'detector'
+    AND \"journey.name\" = 'bill_pay'"
+| var_set name="r" value={getCell "r"}
+| markdown {var "r" | switch {case when=1 then="P1"} {case when=2 then="P2"} {case when=3 then="P3"} default=""}
+  font={font size=11 weight="bold" color="#FFFFFF" align="center"}
+| render containerStyle={containerStyle borderRadius="4px"
+    backgroundColor={var "r" | switch {case when=1 then="#bd271e"} {case when=2 then="#d6a000"} {case when=3 then="#7b61c4"} default="transparent"}}
