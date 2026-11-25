@@ -280,12 +280,12 @@ steps:
                     with:
                       severity: critical
                       owner: observability
-                      title: &title "[{{ steps.get_problem.output.hits.hits[0]._source.problem.priority }}] {{ steps.get_problem.output.hits.hits[0]._source.problem.title }} ({{ steps.create_incident.output.title | default: 'no INC' }})"
+                      title: &title "[{{ steps.get_problem.output.hits.hits[0]._source.problem.priority }}] {{ steps.get_problem.output.hits.hits[0]._source.problem.title }}"
                       tags: &tags ["secbank", "problem:{{ event.alerts[0].kibana.alert.instance.id }}", "{{ steps.get_problem.output.hits.hits[0]._source.problem.priority }}"]
                       settings: &settings { syncAlerts: false }
                       description: &desc |
-                        Severity: {{ steps.get_problem.output.hits.hits[0]._source.problem.priority }} ({{ steps.get_problem.output.hits.hits[0]._source.problem.severity }})
                         ServiceNow: {{ steps.create_incident.output.title | default: 'not created' }} {{ steps.create_incident.output.url }}
+                        Severity: {{ steps.get_problem.output.hits.hits[0]._source.problem.priority }} ({{ steps.get_problem.output.hits.hits[0]._source.problem.severity }})
                         Problem: {{ steps.get_problem.output.hits.hits[0]._source.problem.id }}
                         Affected service: {{ steps.get_problem.output.hits.hits[0]._source.service.name }}
                         Journey: {{ steps.get_problem.output.hits.hits[0]._source.journey.name }}
