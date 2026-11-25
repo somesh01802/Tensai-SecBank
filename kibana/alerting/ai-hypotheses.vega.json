@@ -36,7 +36,7 @@
       "transform": [
         {"type": "formula", "as": "rows", "expr": "[{n: 1, t: datum._source.incident.h1_title, c: datum._source.incident.h1_confidence, d: datum._source.incident.h1_detail, x: datum._source.incident.h1_cause}, {n: 2, t: datum._source.incident.h2_title, c: datum._source.incident.h2_confidence, d: datum._source.incident.h2_detail, x: ''}, {n: 3, t: datum._source.incident.h3_title, c: datum._source.incident.h3_confidence, d: datum._source.incident.h3_detail, x: ''}]"},
         {"type": "flatten", "fields": ["rows"], "as": ["r"]},
-        {"type": "filter", "expr": "datum.r.t"},
+        {"type": "filter", "expr": "datum.r.t && datum.r.n == 1"},
         {"type": "formula", "as": "lines", "expr": "split(trim(replace(datum.r.d || '', regexp('(.{1,' + cpl + '})(\\\\s+|$)', 'g'), '$1\\n')), '\\n')"},
         {"type": "formula", "as": "h", "expr": "34 + 17 * length(datum.lines) + (datum.r.x ? 18 : 0)"},
         {"type": "window", "sort": {"field": "r.n"}, "ops": ["sum"], "fields": ["h"], "as": ["cum"]},
@@ -47,7 +47,7 @@
 
   "marks": [
     {"type": "text", "encode": {"update": {
-      "x": {"value": 0}, "y": {"value": 14}, "text": {"value": "AI hypotheses"},
+      "x": {"value": 0}, "y": {"value": 14}, "text": {"value": "AI root cause"},
       "fontSize": {"value": 15}, "fontWeight": {"value": "bold"}, "fill": {"value": "#dfe5ef"}}}},
     {"type": "text", "from": {"data": "src"}, "encode": {"update": {
       "x": {"signal": "width"}, "y": {"value": 14}, "align": {"value": "right"},
