@@ -1,0 +1,98 @@
+{
+  "$schema": "https://vega.github.io/schema/vega/v5.json",
+  "description": "SecBank 'Actions awaiting a human': the proposed actions for the latest agent RCA (same incident as the AI root cause card). Dashboard > Edit > Add panel > Custom visualization (Vega) > replace the spec with this file > Update > Save.",
+  "autosize": {"type": "fit", "contains": "padding"},
+  "padding": 8,
+  "background": "transparent",
+  "config": {"view": {"stroke": null}, "text": {"font": "Inter, sans-serif"}},
+
+  "signals": [
+    {"name": "cBy", "update": "width * 0.46"},
+    {"name": "cRisk", "update": "width * 0.72"},
+    {"name": "cStatus", "update": "width * 0.82"}
+  ],
+
+  "data": [
+    {
+      "name": "src",
+      "url": {
+        "index": "bank-problems",
+        "body": {
+          "size": 1,
+          "sort": [{"incident.posted_at": {"order": "desc"}}],
+          "_source": ["problem.status", "incident.*"],
+          "query": {"bool": {
+            "must": ["%dashboard_context-must_clause%"],
+            "must_not": ["%dashboard_context-must_not_clause%"],
+            "filter": ["%dashboard_context-filter_clause%",
+              {"exists": {"field": "incident.posted_at"}},
+              {"term": {"labels.data_source": "detector"}}]
+          }}
+        }
+      },
+      "format": {"property": "hits.hits"}
+    },
+    {
+      "name": "acts",
+      "source": "src",
+      "transform": [
+        {"type": "formula", "as": "rows", "expr": "[{n: 1, a: datum._source.incident.a1_action || datum._source.incident.next_action, r: datum._source.incident.a1_risk, by: 'Workflow, from AI hypothesis 1'}, {n: 2, a: datum._source.incident.a2_action, r: datum._source.incident.a2_risk, by: 'Workflow'}, {n: 3, a: datum._source.incident.a3_action, r: datum._source.incident.a3_risk, by: 'Workflow'}]"},
+        {"type": "flatten", "fields": ["rows"], "as": ["x"]},
+        {"type": "filter", "expr": "datum.x.a && datum.x.a != 'Investigating'"},
+        {"type": "window", "sort": {"field": "x.n"}, "ops": ["row_number"], "as": ["i"]},
+        {"type": "formula", "as": "y", "expr": "64 + (datum.i - 1) * 38"},
+        {"type": "formula", "as": "closed", "expr": "datum._source.problem.status == 'closed'"},
+        {"type": "formula", "as": "risk", "expr": "datum.x.r == 'high' ? 'High' : datum.x.r == 'medium' ? 'Medium' : datum.x.r == 'low' ? 'Low' : '-'"}
+      ]
+    }
+  ],
+
+  "marks": [
+    {"type": "text", "encode": {"update": {
+      "x": {"value": 0}, "y": {"value": 16}, "text": {"value": "Actions awaiting a human"},
+      "fontSize": {"value": 15}, "fontWeight": {"value": "bold"}, "fill": {"value": "#dfe5ef"}}}},
+    {"type": "text", "encode": {"update": {
+      "x": {"signal": "width"}, "y": {"value": 16}, "align": {"value": "right"}, "text": {"value": "nothing changes without approval"},
+      "fontSize": {"value": 12}, "fill": {"value": "#98a2b3"}}}},
+
+    {"type": "rect", "encode": {"update": {
+      "x": {"value": 0}, "y": {"value": 28}, "width": {"signal": "width"}, "height": {"value": 36},
+      "fill": {"value": "rgba(255,255,255,0.06)"}, "cornerRadius": {"value": 3}}}},
+    {"type": "text", "encode": {"update": {
+      "x": {"value": 12}, "y": {"value": 51}, "text": {"value": "Proposed action"}, "fontSize": {"value": 13}, "fontWeight": {"value": "bold"}, "fill": {"value": "#c5ccd8"}}}},
+    {"type": "text", "encode": {"update": {
+      "x": {"signal": "cBy"}, "y": {"value": 51}, "text": {"value": "By"}, "fontSize": {"value": 13}, "fontWeight": {"value": "bold"}, "fill": {"value": "#c5ccd8"}}}},
+    {"type": "text", "encode": {"update": {
+      "x": {"signal": "cRisk"}, "y": {"value": 51}, "text": {"value": "Risk"}, "fontSize": {"value": 13}, "fontWeight": {"value": "bold"}, "fill": {"value": "#c5ccd8"}}}},
+    {"type": "text", "encode": {"update": {
+      "x": {"signal": "cStatus"}, "y": {"value": 51}, "text": {"value": "Status"}, "fontSize": {"value": 13}, "fontWeight": {"value": "bold"}, "fill": {"value": "#c5ccd8"}}}},
+
+    {"type": "group", "from": {"data": "acts"}, "encode": {"update": {
+      "x": {"value": 0}, "y": {"field": "y"}, "width": {"signal": "width"}, "height": {"value": 38}}},
+      "marks": [
+        {"type": "rule", "encode": {"update": {
+          "x": {"value": 0}, "x2": {"signal": "width"}, "y": {"value": 38}, "stroke": {"value": "rgba(255,255,255,0.08)"}}}},
+        {"type": "text", "encode": {"update": {
+          "x": {"value": 12}, "y": {"value": 24}, "text": {"signal": "parent.x.a"}, "limit": {"signal": "cBy - 24"},
+          "fontSize": {"value": 13}, "fill": {"value": "#dfe5ef"}}}},
+        {"type": "text", "encode": {"update": {
+          "x": {"signal": "cBy"}, "y": {"value": 24}, "text": {"signal": "parent.x.by"}, "limit": {"signal": "cRisk - cBy - 12"},
+          "fontSize": {"value": 13}, "fill": {"value": "#c5ccd8"}}}},
+        {"type": "text", "encode": {"update": {
+          "x": {"signal": "cRisk"}, "y": {"value": 24}, "text": {"signal": "parent.risk"},
+          "fontSize": {"value": 13}, "fontWeight": {"signal": "parent.risk == 'High' ? 'bold' : 'normal'"},
+          "fill": {"signal": "parent.risk == 'High' ? '#e7664c' : parent.risk == 'Medium' ? '#f5a700' : '#c5ccd8'"}}}},
+        {"type": "rect", "encode": {"update": {
+          "x": {"signal": "cStatus"}, "y": {"value": 8}, "width": {"signal": "parent.closed ? 100 : 128"}, "height": {"value": 22},
+          "cornerRadius": {"value": 4}, "fill": {"signal": "parent.closed ? '#343741' : '#f5c84c'"}}}},
+        {"type": "text", "encode": {"update": {
+          "x": {"signal": "cStatus + 9"}, "y": {"value": 24}, "text": {"signal": "parent.closed ? 'Not executed' : 'Awaiting approval'"},
+          "fontSize": {"value": 12}, "fontWeight": {"value": "bold"}, "fill": {"signal": "parent.closed ? '#98a2b3' : '#3b2c00'"}}}}
+      ]},
+
+    {"type": "text", "encode": {"update": {
+      "x": {"value": 0}, "y": {"signal": "64 + length(data('acts')) * 38 + 24"},
+      "text": {"signal": "length(data('acts')) ? 'Proposed by the workflow from the AI root cause. Nothing runs until a human approves it in Kibana.' : 'No proposed actions yet.'"},
+      "fontSize": {"value": 12}, "fill": {"value": "#6a717d"}}}}
+  ]
+}
