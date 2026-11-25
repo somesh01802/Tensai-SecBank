@@ -1,0 +1,18 @@
+// "Actions awaiting a human" panel (D7). Add panel > ES|QL > paste > Apply > Table > title "Actions awaiting a human".
+// The agent's proposed actions for the latest RCA (same incident as the AI root cause card). Nothing runs
+// automatically: every action stays "Awaiting approval" until a human acts on it.
+// Optional: on the Status column, Color by value (Awaiting approval = amber).
+
+FROM bank-problems
+| WHERE incident.posted_at IS NOT NULL AND labels.data_source == "detector"
+| SORT incident.posted_at DESC
+| LIMIT 1
+| EVAL n = MV_APPEND(MV_APPEND(1, 2), 3)
+| MV_EXPAND n
+| EVAL `Proposed action` = CASE(n == 1, COALESCE(incident.a1_action, incident.next_action), n == 2, incident.a2_action, incident.a3_action),
+       By = CASE(n == 1, "Workflow, from AI hypothesis 1", "Workflow"),
+       Risk = CASE(n == 1, incident.a1_risk, n == 2, incident.a2_risk, incident.a3_risk),
+       Risk = CASE(Risk == "high", "High", Risk == "medium", "Medium", Risk == "low", "Low", "-"),
+       Status = CASE(problem.status == "closed", "Not executed, problem closed", "Awaiting approval")
+| WHERE `Proposed action` IS NOT NULL AND `Proposed action` != ""
+| KEEP `Proposed action`, By, Risk, Status

@@ -1,0 +1,18 @@
+// "Case" panel (D7). Add panel > ES|QL > paste > Apply > Table > title "Case · ServiceNow".
+// The ServiceNow incident for the latest RCA (same incident as the AI root cause card), as Field / Value rows.
+// Optional: on the Value column, Color by value (High = red, Medium = amber).
+
+FROM bank-problems
+| WHERE incident.posted_at IS NOT NULL AND labels.data_source == "detector"
+| SORT incident.posted_at DESC
+| LIMIT 1
+| EVAL n = MV_APPEND(MV_APPEND(MV_APPEND(MV_APPEND(MV_APPEND(1, 2), 3), 4), 5), 6)
+| MV_EXPAND n
+| EVAL Field = CASE(n == 1, "Case", n == 2, "Severity", n == 3, "Opened", n == 4, "Assigned", n == 5, "Alerts attached", "Last updated"),
+       Value = CASE(n == 1, COALESCE(CONCAT("SNOW ", incident.snow_number), "-"),
+                    n == 2, CASE(problem.priority == "P1", "High", problem.priority == "P2", "Medium", "Low"),
+                    n == 3, CONCAT(DATE_FORMAT("HH:mm:ss", incident.posted_at), " by workflow"),
+                    n == 4, problem.owner,
+                    n == 5, COALESCE(incident.grouped, "-"),
+                    CONCAT(DATE_FORMAT("HH:mm", problem.last_seen_at), CASE(problem.status == "closed", ", closed", ", open")))
+| KEEP Field, Value

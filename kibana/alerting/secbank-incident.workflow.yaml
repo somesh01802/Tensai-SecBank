@@ -224,6 +224,8 @@ steps:
                 detail: one or two sentences with the numbers and times from the analysis.
                 cause: only for the top hypothesis, the "CAUSE: service / component / fault type" line.
                 next_action: the single remediation action in under 5 words, e.g. "Failover payment_gw".
+                actions: up to 3 proposed actions from the remediation steps, most important first, each a short
+                imperative sentence (e.g. "Fail over to the secondary payment provider") with risk low, medium or high.
                 Analysis:
                 {{ steps.run_rca.output.response.message | default: steps.run_rca.output.message | default: 'No analysis available' }}
               schema:
@@ -240,7 +242,15 @@ steps:
                         cause: { type: string }
                       required: [title, confidence, detail]
                   next_action: { type: string }
-                required: [hypotheses, next_action]
+                  actions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        action: { type: string }
+                        risk: { type: string, enum: [low, medium, high] }
+                      required: [action, risk]
+                required: [hypotheses, next_action, actions]
 
           - name: create_incident
             type: servicenow
@@ -372,6 +382,13 @@ steps:
                     h3_title: "{{ steps.card_fields.output.content.hypotheses[2].title | default: '' }}"
                     h3_confidence: "{{ steps.card_fields.output.content.hypotheses[2].confidence | default: 0 }}"
                     h3_detail: "{{ steps.card_fields.output.content.hypotheses[2].detail | default: '' }}"
+                    # Proposed actions: shown as "Awaiting approval"; nothing is executed by this workflow.
+                    a1_action: "{{ steps.card_fields.output.content.actions[0].action | default: '' }}"
+                    a1_risk: "{{ steps.card_fields.output.content.actions[0].risk | default: '' }}"
+                    a2_action: "{{ steps.card_fields.output.content.actions[1].action | default: '' }}"
+                    a2_risk: "{{ steps.card_fields.output.content.actions[1].risk | default: '' }}"
+                    a3_action: "{{ steps.card_fields.output.content.actions[2].action | default: '' }}"
+                    a3_risk: "{{ steps.card_fields.output.content.actions[2].risk | default: '' }}"
                     # "N alerts + M warnings": the SecBank alert itself counts as 1 alert.
                     grouped: "{% assign t = steps.get_grouped.output.hits.total.value | default: 0 %}{% assign w = steps.get_grouped.output.aggregations.warnings.doc_count | default: 0 %}{% assign a = t | minus: w | plus: 1 %}{{ a }} alert{% if a != 1 %}s{% endif %}{% if w > 0 %} + {{ w }} warning{% if w != 1 %}s{% endif %}{% endif %}"
             on-failure:
