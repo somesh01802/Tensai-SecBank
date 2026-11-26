@@ -61,9 +61,11 @@ for cx in (600, 813, 1026):
     for cy in (464, 510):
         chip = at(cx, cy)
         new.append(tag(cx + 205 - 36, cy - 8, prefix(chip) + lookup('service.name', 's'), 30, 14))
-# Customers 'impacted' chip: most severe open problem of any kind, just right of the chip.
-new.append(tag(808 + 210 + 6, 326 + 9,
-               f'essql "SELECT MIN(\\"problem.severity_rank\\") AS r FROM \\"bank-problems\\" WHERE {WHERE}"' + TAIL))
+# Customers 'impacted' chip: one badge per priority (P1, P2, P3), each shown only while one is open.
+for i, rank in enumerate((1, 2, 3)):
+    new.append(tag(808 + 210 + 6 + i * 36, 326 + 9,
+                   f'essql "SELECT CASE WHEN COUNT(*) > 0 THEN {rank} END AS r FROM \\"bank-problems\\" WHERE {WHERE}'
+                   f' AND \\"problem.severity_rank\\" = {rank}"' + TAIL))
 
 # Problems row: only problems written by the SecBank detector (the retired workflow's documents are ignored).
 row = at(600, 602)
@@ -71,6 +73,10 @@ old = "WHERE \\\"problem.status\\\" = 'open' ORDER BY r"
 if old not in row['expression']:
     sys.exit('Problems row query changed; not patching it')
 row['expression'] = row['expression'].replace(old, f"WHERE {WHERE} ORDER BY r")
+# Branch problems have no journey or service: show the branch and its link instead of an empty "P3 ->".
+row['expression'] = (row['expression']
+    .replace('\\"journey.name\\" AS j', 'COALESCE(\\"journey.name\\", \\"bank.branch.id\\") AS j')
+    .replace('COALESCE(\\"bank.dependency\\", \\"service.name\\") AS d', "COALESCE(\\\"bank.dependency\\\", \\\"service.name\\\", 'WAN link') AS d"))
 
 els.extend(new)
 w['id'] = 'workpad-secbank-wallboard-tagged'
